@@ -97,19 +97,21 @@ The discribution is computed over equivalence classes of answers. The equivalenc
     
 ## Evaluating Results
 
-Evaluation is enabled using the options `-e` and `--equals`/`--evaluator`.
+Evaluation is enabled using the option `-e`, and the evaluation criteria are specified with `--equal` and `--evaluator`.
 
 This command will output an evaluation table for previously computed responses, checking if they are equal to `Beijing`:
 
-    llm-query -e output --equals Beijing
+    llm-query -e output --equal Beijing
     
-This command will print the evaluation table for only one response, and will also terminate with the zero exit code if the answer is correct:
+This command will compute the response, print the evaluation table for this response, and will terminate with the zero exit code if the answer is correct:
 
-    llm-query "What is the capital of China?" --equals Beijing
+    llm-query "What is the capital of China?" --equal Beijing
     
-The special evaluator `--equals VALUE` checks if answer is equivalent to `VALUE` wrt the specified equivalence relation.
+When one of the options `--equal` or `--evaluator` is present without `-e` and `-o`, the responses are saved into a temporary directory.
+    
+The special evaluator `--equal VALUE` checks if answer is equivalent to `VALUE` wrt the specified equivalence relation.
 
-Custom evaluators are shell commands that terminate with the zero exit code iff the answer passes evaluation. A custom evaluator is specified using the option `--evaluator COMMAND` instead of `--equals`.
+Custom evaluators are shell commands that terminate with the zero exit code iff the answer passes evaluation. A custom evaluator is specified using the option `--evaluator COMMAND` instead of `--equal`.
 
 This helper function acts as a predicate over `$ANSWER`:
 
@@ -117,7 +119,7 @@ This helper function acts as a predicate over `$ANSWER`:
     
 It is equivalent to the following:
 
-    llm-query "Is $ANSWER the capital of China? Respond Yes or No." -a --equals Yes >/dev/null
+    llm-query "Is $ANSWER the capital of China? Respond Yes or No." -a --equal Yes >/dev/null
 
 ## Shell Template Language
 
