@@ -97,7 +97,7 @@ The discribution is computed over equivalence classes of answers. The equivalenc
     
 ## Evaluating Results
 
-Evaluation is enabled using the options `-e` and `--equals`.
+Evaluation is enabled using the options `-e` and `--equals`/`--evaluator`.
 
 This command will output an evaluation table for previously computed responses, checking if they are equal to `Beijing`:
 
