@@ -140,6 +140,8 @@ It is equivalent to the following:
 
 ## Shell Template Language
 
+## Shell Template Language
+
 The shell template language allows dynamic substitution of specific placeholders with runtime values before executing a shell command. These placeholders are instantiated and replaced with their corresponding values before the command is executed by the system shell.
 
 Available placeholders:
@@ -148,6 +150,6 @@ Available placeholders:
 - `%%FILE%%` - replaced with a path to a temporary file containing the answer.
 - `%%TASK%%` - replaced with the task name.
 
-For commands that require multiple answers or inputs, indexed placeholders are provided, e.g. `%%ANSWER1%%` and `%%ANSWER2%%`.
+For commands that require multiple answers, indexed placeholders are provided, e.g. `%%ANSWER1%%`, `%%ANSWER2%%`, `%%FILE1%%` and `%%FILE2%%`.
 
-Variants of placeholders wrapped in quotes are available for safety when handling special characters, e.g. `%%SINGLEQOUTED_ANSWER%%` and `%%DOUBLEQOUTED_ANSWER%%`.
+Variants of shell-escaped placeholders are available for safety when handling special characters, e.g. `%%ESCAPED_ANSWER%%`, `%%ESCAPED_FILE%%`, `%%ESCAPED_TASK%%`.

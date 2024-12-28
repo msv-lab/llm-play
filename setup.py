@@ -9,7 +9,7 @@ setup(
         'pyyaml',
         'anthropic',
         'openai',
-        'inquirer',
+        'InquirerPy',
         'tqdm'
     ],
     entry_points={

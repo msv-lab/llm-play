@@ -1,14 +1,17 @@
 from enum import Enum
 
+import shlex
 import os
 import sys
 import shutil
 import configparser
 import argparse
+import tempfile
+import subprocess
 
 import yaml
 from tqdm import tqdm
-import inquirer
+import InquirerPy
 from openai import OpenAI
 
 DEFAULT_CONFIG = r"""
@@ -17,13 +20,11 @@ default:
   temperature: 1.0
   extractor: ID
   equivalence: TRIMMED_CASE_INSENSITIVE
-
 providers:
   Aliyun:
     API: OpenAI
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     key_env_variable: DASHSCOPE_API_KEY
-
   DeepSeek:
     API: OpenAI
     base_url: https://api.deepseek.com
@@ -38,7 +39,6 @@ providers:
     API: Anthropic
     base_url: https://api.openai-proxy.org/anthropic
     key_env_variable: CLOSEAI_API_KEY
-    
 models:
   -
     name: qwen-max-2024-09-19
@@ -76,19 +76,17 @@ models:
   -
     name: claude-3-5-sonnet-20241022
     provider: CloseAI_Anthropic
-
 extractors:
   - ID
-  - |
-    sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%SINGLEQUOTED_FILE%%
-  - |
-    awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%SINGLEQUOTED_FILE%%
-
+  - |-
+    sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_FILE%%
+  - |-
+    awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%ESCAPED_FILE%%
 equivalences:
   - ID
   - TRIMMED_CASE_INSENSITIVE
-  - |
-    llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: %%DOUBLEQUOTED_ANSWER1%% and %%DOUBLEQUOTED_ANSWER2%%?' -p
+  - |-
+    llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: "%%ANSWER1%%" and "%%ANSWER2%%"?' -p
 """
 
 
@@ -180,14 +178,50 @@ def execute_batch_jobs(inputs, settings, output, config):
                     pbar.update()
 
 
+def instantiate_shell_template(template, answers=None, files=None, task=None):
+    if isinstance(answers, str) or answers is None:
+        answers = [answers]
+    if isinstance(files, str) or files is None:
+        files = [files]
+
+    def get_replacement(item_list, index, escape=False):
+        value = item_list[index]
+        return shlex.quote(value) if escape and value is not None else value
+
+    if len(answers) * len(files) == 1:
+        template = template.replace(f"%%ANSWER%%", get_replacement(answers, 0))
+        template = template.replace(f"%%ESCAPED_ANSWER%%", get_replacement(answers, 0, escape=True))
+        template = template.replace(f"%%FILE%%", get_replacement(files, 0))
+        template = template.replace(f"%%ESCAPED_FILE%%", get_replacement(files, 0, escape=True))
+    else:
+        for i in range(max(len(answers), len(files)), 0, -1):
+            template = template.replace(f"%%ANSWER{i}%%", get_replacement(answers, i - 1))
+            template = template.replace(f"%%ESCAPED_ANSWER{i}%%", get_replacement(answers, i - 1, escape=True))
+            template = template.replace(f"%%FILE{i}%%", get_replacement(files, i - 1))
+            template = template.replace(f"%%ESCAPED_FILE{i}%%", get_replacement(files, i - 1, escape=True))
+    template = template.replace(f"%%TASK%%", get_replacement([task], 0))
+    template = template.replace(f"%%ESCAPED_TASK%%", get_replacement([task], 0, escape=True))
+
+    return template
+
+
+def extract(response, extractor, task):
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        temp_file.write(response.encode())
+        temp_file.flush()
+        cmd = instantiate_shell_template(extractor, answers=response, files=temp_file.name, task=task)
+        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        return result.stdout
+
+
 def main():
     user_config_file = os.path.expanduser("~") + "/.llm_query.yaml"
 
-    if not os.path.isfile(user_config_file):
-        config = yaml.safe_load(DEFAULT_CONFIG)
-    else:
+    if os.path.isfile(user_config_file):
         with open(user_config_file, 'r') as file:
             config = yaml.safe_load(file)
+    else:
+        config = yaml.safe_load(DEFAULT_CONFIG)
 
     arguments = parse_args()
 
@@ -203,30 +237,39 @@ def main():
         exit(1)
 
     if arguments.set:
-        questions = [
-            inquirer.List('model',
-                          message="Set model",
-                          choices=[entry['name'] for entry in config['models']],
-                          default=config['default']['model']
-                          ),
-            inquirer.Text('temperature',
-                          message="Set model temperature",
-                          default=config['default']['temperature']
-                          ),
-            inquirer.List('extractor',
-                          message="Set answer extractor",
-                          choices=config['extractors'],
-                          default=config['default']['extractor']
-                          ),
-            inquirer.List('equivalence',
-                          message="Set equivalence relation",
-                          choices=config['equivalences'],
-                          default=config['default']['equivalence']
-                          ),
-        ]
-        config['selected'] = inquirer.prompt(questions)
+        t = InquirerPy.prompt([
+                {
+                    "type": "list",
+                    "name": "model",
+                    "message": "Set model",
+                    "choices": [entry['name'] for entry in config['models']],
+                    "default": config['default']['model']
+                },
+                {
+                    "type": "input",
+                    "name": "temperature",
+                    "message": "Set model temperature",
+                    "default": str(config['default']['temperature'])
+                },
+                {
+                    "type": "list",
+                    "name": "extractor",
+                    "message": "Set answer extractor",
+                    "choices": config['extractors'],
+                    "default": config['default']['extractor']
+                },
+                {
+                    "type": "list",
+                    "name": "equivalence",
+                    "message": "Set equivalence relation",
+                    "choices": config['equivalences'],
+                    "default": config['default']['equivalence']
+                },
+        ])
+        if t:
+            config['default'] = t
         with open(user_config_file, 'w') as f:
-            yaml.dump(config, f)
+            yaml.dump(config, f, width=float("inf"))
     else:
         settings = dict()
 
@@ -246,18 +289,30 @@ def main():
         if arguments.temperature:
             settings['temperature'] = str(arguments.temperature)
         else:
-            settings['temperature'] = [config['default']['temperature']]
+            settings['temperature'] = config['default']['temperature']
 
         if arguments.num_responses:
             settings['num_responses'] = arguments.num_responses
         else:
             settings['num_responses'] = 1
 
+        if arguments.extractor:
+            settings['extractor'] = arguments.extractor
+        else:
+            settings['extractor'] = config['default']['extractor']
+
         if (settings['num_responses'] <= 1 and
             len(settings['models']) <= 1 and
             inputs[0][0] == UNNAMED_TASK and
             not arguments.output):
-            stream_response(inputs[0][1], settings['models'][0], settings['temperature'], config)
+            if settings['extractor'] == 'ID':
+                stream_response(inputs[0][1], settings['models'][0], settings['temperature'], config)
+            else:
+                response = get_response(inputs[0][1], settings['models'][0], settings['temperature'], config)
+                answer = extract(response, settings['extractor'], UNNAMED_TASK)
+                print(answer, end="")
+                if os.isatty(sys.stdout.fileno()):
+                    print()
         else:
             execute_batch_jobs(inputs, settings, arguments.output, config)
 
