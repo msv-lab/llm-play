@@ -6,6 +6,8 @@ setup(
     packages=find_packages(),
     py_modules=["llm_query"],
     install_requires=[
+        'pyyaml',
+        'anthropic',
         'openai',
         'inquirer',
         'tqdm'

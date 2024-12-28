@@ -5,71 +5,106 @@ import sys
 import shutil
 import configparser
 import argparse
-import fileinput
 
-
+import yaml
 from tqdm import tqdm
 import inquirer
 from openai import OpenAI
 
+DEFAULT_CONFIG = r"""
+selected:
+  model: qwen2.5-72b-instruct
+  temperature: 1.0
+  extractor: ID
+  equivalence: TRIMMED_CASE_INSENSITIVE
 
-class Provider(Enum):
-    ALIYUN = 1
-    DEEPSEEK = 2
-    CLOSEAI_OPENAI = 3
-    CLOSEAI_ANTHROPIC = 4
+providers:
+  Aliyun:
+    API: OpenAI
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    key_env_variable: DASHSCOPE_API_KEY
+
+  DeepSeek:
+    API: OpenAI
+    base_url: https://api.deepseek.com
+    key_env_variable: DEEPSEEK_API_KEY
+    
+  CloseAI_OpenAI:
+    API: OpenAI
+    base_url: https://api.openai-proxy.org/v1
+    key_env_variable: CLOSEAI_API_KEY
+
+  CloseAI_Anthropic:
+    API: Anthropic
+    base_url: https://api.openai-proxy.org/anthropic
+    key_env_variable: CLOSEAI_API_KEY
+    
+models:
+  -
+    name: qwen-max-2024-09-19
+    provider: Aliyun
+  -
+    name: qwq-32b-preview
+    provider: Aliyun
+  -
+    name: qwen2.5-72b-instruct
+    provider: Aliyun
+  -
+    name: qwen2.5-7b-instruct
+    provider: Aliyun
+  -
+    name: qwen2.5-coder-32b-instruct
+    provider: Aliyun
+  -
+    name: qwen2.5-coder-7b-instruct
+    provider: Aliyun
+  -
+    name: deepseek-chat
+    provider: Deepseek
+  -
+    name: o1-2024-12-17
+    provider: CloseAI_OpenAI
+  -
+    name: o1-mini-2024-09-12
+    provider: CloseAI_OpenAI
+  -
+    name: gpt-4o-2024-11-20
+    provider: CloseAI_OpenAI
+  -
+    name: gpt-4o-mini-2024-07-18
+    provider: CloseAI_OpenAI
+  -
+    name: claude-3-5-sonnet-20241022
+    provider: CloseAI_Anthropic
+
+extractors:
+  - ID
+  - sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%SINGLEQUOTED_FILE%%
+  - awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%SINGLEQUOTED_FILE%%
+
+equivalences:
+  - ID
+  - TRIMMED_CASE_INSENSITIVE
+  - llm-query -m qwen2.5-72b-instruct 'Are these two entities equivalent: <entity>%%VALUE1%%</entity> and <entity>%%VALUE2%%</entity>?' -p
+"""
 
 
-PROVIDER_MODELS = [
-    (Provider.ALIYUN, 'qwen-max-2024-09-19'),
-    (Provider.ALIYUN, 'qwq-32b-preview'),
-    (Provider.ALIYUN, 'qwen2.5-72b-instruct'),
-    (Provider.ALIYUN, 'qwen2.5-7b-instruct'),
-    (Provider.ALIYUN, 'qwen2.5-coder-32b-instruct'),
-    (Provider.ALIYUN, 'qwen2.5-coder-7b-instruct'),
-   
-    (Provider.DEEPSEEK, 'deepseek-chat'),
-
-    (Provider.CLOSEAI_OPENAI, 'o1-2024-12-17'),
-    (Provider.CLOSEAI_OPENAI, 'o1-mini-2024-09-12'),
-    (Provider.CLOSEAI_OPENAI, 'gpt-4o-2024-11-20'),
-    (Provider.CLOSEAI_OPENAI, 'gpt-4o-mini-2024-07-18'),
-]
+def sanitize_path_to_filename(path: str) -> str:
+    return path.replace("/", "__").replace("\\", "__")
 
 
-provider_base_url = {
-    Provider.ALIYUN: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    Provider.DEEPSEEK: "https://api.deepseek.com",
-    Provider.CLOSEAI_OPENAI: "https://api.openai-proxy.org/v1"
-}
-
-
-provider_key_env_var = {
-    Provider.ALIYUN: "DASHSCOPE_API_KEY",
-    Provider.DEEPSEEK: "DEEPSEEK_API_KEY",
-    Provider.CLOSEAI_OPENAI: "CLOSEAI_API_KEY"
-}
-
-
-provider_name = {
-    Provider.ALIYUN: "AliCloud",
-    Provider.DEEPSEEK: "DeepSeek",
-    Provider.CLOSEAI_OPENAI: "CloseAI"
-}
-
-
-def get_provider_by_model(model):
-    for (provider, m) in PROVIDER_MODELS:
-        if model == m:
-            return provider
+def get_provider_by_model(model, config):
+    for m in config['models']:
+        if model == m['name']:
+            return m['provider']
     raise ValueError(f"no provider for model {model}")
 
 
-def get_response(prompt, model, temperature):
-    provider = get_provider_by_model(model)
+def get_response(prompt, model, temperature, config):
+    provider = get_provider_by_model(model, config)
     client = OpenAI(
-        api_key=os.getenv(provider_key_env_var[provider]),
-        base_url=provider_base_url[provider],
+        api_key=os.getenv(config['providers'][provider]['key_env_variable']),
+        base_url=config['providers'][provider]['base_url'],
     )
     completion = client.chat.completions.create(
         model=model,
@@ -79,11 +114,11 @@ def get_response(prompt, model, temperature):
     return completion.choices[0].message.content
 
 
-def stream_response(prompt, model, temperature):
-    provider = get_provider_by_model(model)
+def stream_response(prompt, model, temperature, config):
+    provider = get_provider_by_model(model, config)
     client = OpenAI(
-        api_key=os.getenv(provider_key_env_var[provider]),
-        base_url=provider_base_url[provider],
+        api_key=os.getenv(config['providers'][provider]['key_env_variable']),
+        base_url=config['providers'][provider]['base_url'],
     )
     stream = client.chat.completions.create(
         model=model,
@@ -122,12 +157,12 @@ def execute_jobs(arguments, config):
     if arguments.model:
         models = arguments.model
     else:
-        models = [config['llm']['model']]
+        models = [config['selected']['model']]
 
     if arguments.temperature:
         temperature = str(arguments.temperature)
     else:
-        temperature = [config['llm']['temperature']]
+        temperature = [config['selected']['temperature']]
 
     if arguments.num_responses:
         num_responses = arguments.num_responses
@@ -138,7 +173,7 @@ def execute_jobs(arguments, config):
         len(models) <= 1 and
         isinstance(inputs, str) and
         not arguments.output):
-        stream_response(inputs, models[0], temperature)
+        stream_response(inputs, models[0], temperature, config)
     else:
         execute_batch_jobs(inputs, models, num_responses, temperature, arguments.output)
 
@@ -148,7 +183,7 @@ def recreate_directory(path):
         shutil.rmtree(path)
     os.makedirs(path)
 
-        
+
 def execute_batch_jobs(inputs, models, num_responses, temperature, output):
     recreate_directory(output)
     if isinstance(inputs, str):
@@ -157,7 +192,7 @@ def execute_batch_jobs(inputs, models, num_responses, temperature, output):
                 model_path = output + "/" + model + "_" + temperature
                 os.makedirs(model_path)
                 for i in range(num_responses):
-                    response = get_response(inputs, model, temperature)
+                    response = get_response(inputs, model, temperature, config)
                     with open(f"{model_path}/{i}.md", "w") as file:
                         file.write(response)
                     pbar.update()
@@ -166,16 +201,13 @@ def execute_batch_jobs(inputs, models, num_responses, temperature, output):
 
 
 def main():
-    config = configparser.ConfigParser()
-    
-    user_config_file = os.path.expanduser("~") + "/.llm_query.ini"
-    if os.path.isfile(user_config_file):
-        config.read(user_config_file)
+    user_config_file = os.path.expanduser("~") + "/.llm_query.yaml"
+
+    if not os.path.isfile(user_config_file):
+        config = yaml.safe_load(DEFAULT_CONFIG)
     else:
-        config['llm'] = {
-            'model': 'qwen2.5-72b-instruct',
-            'temperature': '1.0'
-        }
+        with open(user_config_file, 'r') as file:
+            config = yaml.safe_load(file)
 
     arguments = parse_args()
 
@@ -194,17 +226,27 @@ def main():
         questions = [
             inquirer.List('model',
                           message="Set model",
-                          choices=[m for (p, m) in PROVIDER_MODELS],
-                          default=config['llm']['model']
+                          choices=[entry['name'] for entry in config['models']],
+                          default=config['selected']['model']
                           ),
             inquirer.Text('temperature',
                           message="Set model temperature",
-                          default=config['llm']['temperature']
+                          default=config['selected']['temperature']
+                          ),
+            inquirer.List('extractor',
+                          message="Set answer extractor",
+                          choices=config['extractors'],
+                          default=config['selected']['extractor']
+                          ),
+            inquirer.List('equivalence',
+                          message="Set equivalence relation",
+                          choices=config['equivalences'],
+                          default=config['selected']['equivalence']
                           ),
         ]
-        config['llm'] = inquirer.prompt(questions)
+        config['selected'] = inquirer.prompt(questions)
         with open(user_config_file, 'w') as f:
-            config.write(f)
+            yaml.dump(config, f)
     else:
         execute_jobs(arguments, config)
 
