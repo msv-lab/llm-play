@@ -41,13 +41,13 @@ To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with
 The responses will be organized as follows:
 
     output
-    └── __unnamed__
-        ├─── qwen2.5-7b-instruct_1.0
-        │   ├── 0.md
-        ...
-        │   └── 9.md
-        │
-        └── qwen2.5-coder-7b-instruct_1.0
+    ├── qwen2.5-7b-instruct_1.0
+    │   └── __unnamed__
+    │       ├── 0.md
+    │       ...
+    │       └── 9.md
+    └── qwen2.5-coder-7b-instruct_1.0
+        └── __unnamed__
             ├── 0.md
             ...
             └── 9.md
@@ -57,7 +57,6 @@ To query a model with prompts contained in the files `a.md` and `b.md` (or any f
     llm-query -i *.md -o output
 
 If the query is provided via stdin or as an argument, the task will be named `__unnamed__`. If the query is from a file, the task name will be derived from the file path, with all `/` characters replaced by double underscores `__`.
-
 
 An output directory must be explicitly provided (e.g. `-o output`) if any of the following conditions are true:
 
