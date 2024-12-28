@@ -85,7 +85,7 @@ extractors:
 equivalences:
   - ID
   - TRIMMED_CASE_INSENSITIVE
-  - llm-query -m qwen2.5-72b-instruct 'Are these two entities equivalent: <entity>%%VALUE1%%</entity> and <entity>%%VALUE2%%</entity>?' -p
+  - llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: <answer>%%ANSWER1%%</answer> and <answer>%%ANSWER2%%</answer>?' -p
 """
 
 

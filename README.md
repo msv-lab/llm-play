@@ -1,38 +1,44 @@
 # llm-query
 
-An utility for small-scale experimentation with LLMs. It supports querying models, extracting answers from responses, executing evals, comparing outputs.
+An utility for small-scale experimentation with LLMs. It enables users to query models, extract answers from responses, perform evaluations, and compare outputs.
 
 ## Installation
 
-Define some of `DASHSCOPE_API_KEY`, `DEEPSEEK_API_KEY`, `CLOSEAI_API_KEY`.
+Set one or more of the following API keys as environment variables, depending on the services you plan to use:
 
-Install with `pip install .`
+- `DASHSCOPE_API_KEY`
+- `DEEPSEEK_API_KEY`
+- `CLOSEAI_API_KEY`
+
+Install the tool by running the command `pip install .`
 
 ## Basic Usage
 
-Simple query:
+Run the following command to ask a question directly:
 
     llm-query "What is the capital of China?"
     
-Query from file `prompt.md`:
+You can input a query stored in a file, such as `prompt.md`:
 
     llm-query < prompt.md
 
-Write answer to `output.md`:
+Write the response to a file (e.g., `output.md`):
 
     llm-query "What is the capital of China?" > output.md
     
-Set default model, temperature, etc (written to `~/.llm_query.yaml`):
+Set default model, temperature, and other options. These settings are saved in `~/.llm_query.yaml`:
 
     llm-query -s
     
+Command-line options take precedence over the default settings.
+    
 ## Batch Processing
     
-Query two models with the temparature 0.5, generate 10 responses, write into the directory `output`:
+To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, generate 10 responses, and save the results into the directory `output`, use the command:
 
     llm-query "What is the capital of China?" -m qwen2.5-7b-instruct qwen2.5-coder-7b-instruct -t 0.5 -n 10 -o output
     
-The resulting directory structure (`unnamed` is the name of the task):
+The responses will be organized as follows:
 
     output
     └── unnamed
@@ -46,82 +52,97 @@ The resulting directory structure (`unnamed` is the name of the task):
             ...
             └── 9.md
 
-Query a model on all prompts in the files `a.md` and `b.md` in the current repository, write responses into the directory `output`:
+To query a model with prompts contained in the files `a.md` and `b.md` (or any files matching `*.md` in the current directory), and save the responses into the directory `output`, use the command:
 
     llm-query -i *.md -o output
-    
-The resulting directory structure (assuming `qwen2.5-7b-instruct` and `1.0` as defaults):
-    
-    output
-    ├── a.md
-    │   └── qwen2.5-7b-instruct_1.0
-    │       ├── 0.md
-    ...
-    │       └── 9.md
-    └── b.md
-        └── qwen2.5-7b-instruct_1.0
-            ├── 0.md
-            ...
-            └── 9.md
-    
-The name of the output directory is required if any of the following is higher than 1:
 
-- number of models
-- number of responses
-- number of input files
+If the query is provided via stdin or as an argument, the task will be named unnamed. If the query is from a file, the task name will be derived from the file path, with all `/` characters replaced by double underscores `__`.
+
+
+An output directory must be explicitly provided (e.g. `-o output`) if any of the following conditions are true:
+
+- The number of models queried is greater than 1.
+- The number of responses generated per query is greater than 1.
+- The number of input files is greater than 1.
 
 ## Extracting Answers
 
-Extractors are shell commands that extract answers from responses. They are defined using the shell template langauge described below. The special extractor `ID` just returns the entire response.
+Extractors are shell commands used to extract specific answers from responses. These commands are defined using a shell template language (described below). The special extractor `ID` simply returns the entire response without modification.
 
-Assume that the extractor `sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%SINGLEQUOTED_FILE%%` was selected using `llm-query -s`. The following command will print only the name of the city:
+Suppose the following extractor is selected using the `-s` option:
+
+    sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%SINGLEQUOTED_FILE%%
+    
+This extractor searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
+
+The following command will print only the name of the city (i.e., `Beijing`):
 
     llm-query "What is the capital of China? Wrap the final answer with <answer> </answer>"
     
-A custom extractor can be specified as the argument of the option `--extractor`.
+You can provide your own custom extractor via the `--extractor` option.
 
-There are helper functions for answers and code that automatically augment the prompt and extract the relevant parts of the response:
+There are built-in helper functions to simplify extracting answers or code. These helpers automatically augment the prompt and extract the relevant parts of the response.
 
     llm-query "What is the capital of China?" -a
     llm-query "Write a Python function f(n: int) -> int that computes the n-th Catalan number" -c
     
 ## Examining Answers
 
-To view the distribution of responses (for one or more models/inputs):
+To analyze the distribution of responses (across one or more models and/or inputs), use the following command:
 
     llm-query -d output/
 
-An answer extraction is performed before computing the distribution.
+Before computing the distribution of responses, answer extraction is performed. This uses the extractor configured in the prompt or with the `-s` or `--extractor` option to ensure that only the relevant part of each response is considered for distribution analysis.
 
-The discribution is computed over equivalence classes of answers. The equivalence relation is defined via shell command that terminates with the zero exit code iff two answers are equivalent. It can either be set using `llm-query -s`, or specified using the option `--equivalence`.
+To compute the distribution, answers are grouped into equivalence classes. This equivalence is defined via a shell command that exits with a zero status code when two answers are equivalent. The equivalence relation can be configured:
+
+- Using the `-s` option to select a predefined equivalence command.
+- Or, specifying a custom equivalence command using the `--equivalence` option.
     
 ## Evaluating Results
 
-Evaluation is enabled using the option `-e`, and the evaluation criteria are specified with `--equal` and `--evaluator`.
+The evaluation mode is enabled with the `-e` option and evaluates previously computed responses against specified criteria.
 
-This command will output an evaluation table for previously computed responses, checking if they are equal to `Beijing`:
+To evaluate the responses stored in the output directory by checking if they are equal to `Beijing` and pring an evaluation table, use:
 
     llm-query -e output --equal Beijing
     
-This command will compute the response, print the evaluation table for this response, and will terminate with the zero exit code if the answer is correct:
+You can also compute and evaluate a response on-the-fly. If the response matches the evaluation criteria, the command will terminate with a zero exit code.
 
     llm-query "What is the capital of China?" --equal Beijing
+
+When evaluating responses on-the-fly without explicitly enabling `-e` (evaluation mode) or specifying `-o` (an output directory), responses are saved in a temporary directory.
+
+The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--equivalence` or the default one selected with `-s`.
     
-When one of the options `--equal` or `--evaluator` is present without `-e` and `-o`, the responses are saved into a temporary directory.
-    
-The special evaluator `--equal VALUE` checks if answer is equivalent to `VALUE` wrt the specified equivalence relation.
+### Custom Evaluator
 
-Custom evaluators are shell commands that terminate with the zero exit code iff the answer passes evaluation. A custom evaluator is specified using the option `--evaluator COMMAND` instead of `--equal`.
+Instead of comparing responses to a value with `--equal`, you can specify a custom evaluator using the `--evaluator` option. A custom evaluator is a shell command that terminates with a zero exit code if the response passes evaluation.
 
-This helper function acts as a predicate over `$ANSWER`:
+    llm-query -e output --evaluator 'wc -w <<< %%SINGLEQUOTED_ANSWER | grep -q ^1$'
 
-    llm-query "Is $ANSWER the capital of China?" -p
+This example evaluates whether each response contains exactly one word.
+
+### Predicates
+
+This helper function acts as a predicate over `$CITY`:
+
+    llm-query "Is $CITY the capital of China?" -p
     
 It is equivalent to the following:
 
-    llm-query "Is $ANSWER the capital of China? Respond Yes or No." -a --equal Yes >/dev/null
+    llm-query "Is $CITY the capital of China? Respond Yes or No." -a --equal Yes >/dev/null
 
 ## Shell Template Language
 
-## Case Study: Executing MBPP
+The shell template language allows dynamic substitution of specific placeholders with runtime values before executing a shell command. These placeholders are instantiated and replaced with their corresponding values before the command is executed by the system shell.
 
+Available placeholders:
+
+- `%%ANSWER%%` - replaced with the raw answer.
+- `%%FILE%%` - replaced with a path to a temporary file containing the answer.
+- `%%TASK%%` - replaced with the task name.
+
+For commands that require multiple answers or inputs, indexed placeholders are provided, e.g. `%%ANSWER1%%` and `%%ANSWER2%%`.
+
+Variants of placeholders wrapped in quotes are available for safety when handling special characters, e.g. `%%SINGLEQOUTED_ANSWER%%` and `%%DOUBLEQOUTED_ANSWER%%`.
