@@ -12,7 +12,7 @@ import inquirer
 from openai import OpenAI
 
 DEFAULT_CONFIG = r"""
-selected:
+default:
   model: qwen2.5-72b-instruct
   temperature: 1.0
   extractor: ID
@@ -79,14 +79,20 @@ models:
 
 extractors:
   - ID
-  - sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%SINGLEQUOTED_FILE%%
-  - awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%SINGLEQUOTED_FILE%%
+  - |
+    sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%SINGLEQUOTED_FILE%%
+  - |
+    awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%SINGLEQUOTED_FILE%%
 
 equivalences:
   - ID
   - TRIMMED_CASE_INSENSITIVE
-  - llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: <answer>%%ANSWER1%%</answer> and <answer>%%ANSWER2%%</answer>?' -p
+  - |
+    llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: %%DOUBLEQUOTED_ANSWER1%% and %%DOUBLEQUOTED_ANSWER2%%?' -p
 """
+
+
+UNNAMED_TASK = '__unnamed__'
 
 
 def sanitize_path_to_filename(path: str) -> str:
@@ -137,45 +143,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="LLM Query Interface")
     parser.add_argument("query", nargs='?', type=str, help="Query string")
     parser.add_argument("-i", "--input", nargs='+', type=str, help="Input files")
-    parser.add_argument("-o", "--output", type=str, help="Output directory or file")
-    parser.add_argument("-m", "--model", nargs='+', type=str, help="List of models to query")
+    parser.add_argument("-o", "--output", type=str, help="Output directory")
+    parser.add_argument("-e", "--eval", type=str, help="Evaluate responses in the directory")
+    parser.add_argument("-d", "--distribution", type=str, help="Compute distribution of responses in the directory")    
+    parser.add_argument("-m", "--models", nargs='+', type=str, help="List of models to query")
     parser.add_argument("-t", "--temperature", type=float, help="Temperature for model generation")
     parser.add_argument("-n", "--num-responses", type=int, help="Number of responses to generate")
-    parser.add_argument("-c", "--configure", action="store_true", help="Configure default model and temperature") 
+    parser.add_argument("-s", "--set", action="store_true", help="Set default options") 
     return parser.parse_args()
-
-
-def execute_jobs(arguments, config):
-    if arguments.query:
-        inputs = arguments.query
-    elif (not arguments.input and
-        not arguments.query):
-        inputs = sys.stdin.read()
-    else:
-        inputs = [('label', 'content')]
-
-    if arguments.model:
-        models = arguments.model
-    else:
-        models = [config['selected']['model']]
-
-    if arguments.temperature:
-        temperature = str(arguments.temperature)
-    else:
-        temperature = [config['selected']['temperature']]
-
-    if arguments.num_responses:
-        num_responses = arguments.num_responses
-    else:
-        num_responses = 1
-    
-    if (num_responses and
-        len(models) <= 1 and
-        isinstance(inputs, str) and
-        not arguments.output):
-        stream_response(inputs, models[0], temperature, config)
-    else:
-        execute_batch_jobs(inputs, models, num_responses, temperature, arguments.output)
 
 
 def recreate_directory(path):
@@ -184,20 +159,18 @@ def recreate_directory(path):
     os.makedirs(path)
 
 
-def execute_batch_jobs(inputs, models, num_responses, temperature, output):
+def execute_batch_jobs(inputs, settings, output, config):
     recreate_directory(output)
-    if isinstance(inputs, str):
-        with tqdm(total=len(models) * num_responses) as pbar:
-            for im, model in enumerate(models):
-                model_path = output + "/" + model + "_" + temperature
+    for name, prompt in inputs:
+        with tqdm(total=len(settings['models']) * settings['num_responses']) as pbar:
+            for im, model in enumerate(settings['models']):
+                model_path = output + "/" + model + "_" + settings['temperature']
                 os.makedirs(model_path)
                 for i in range(num_responses):
-                    response = get_response(inputs, model, temperature, config)
+                    response = get_response(prompt, model, settings['temperature'], config)
                     with open(f"{model_path}/{i}.md", "w") as file:
                         file.write(response)
                     pbar.update()
-    else:
-        pass
 
 
 def main():
@@ -212,7 +185,7 @@ def main():
     arguments = parse_args()
 
     if (((arguments.num_responses and arguments.num_responses > 1) or
-         (arguments.model and len(arguments.model) > 1) or
+         (arguments.models and len(arguments.models) > 1) or
          (arguments.input and len(arguments.input) > 1)) and
         not arguments.output):
         print("the output directory needs to be specified with -o/--output", file=sys.stderr)
@@ -222,33 +195,64 @@ def main():
         print("specify either the query string, or the input files with -i/-input, not both", file=sys.stderr)
         exit(1)
 
-    if arguments.configure:
+    if arguments.set:
         questions = [
             inquirer.List('model',
                           message="Set model",
                           choices=[entry['name'] for entry in config['models']],
-                          default=config['selected']['model']
+                          default=config['default']['model']
                           ),
             inquirer.Text('temperature',
                           message="Set model temperature",
-                          default=config['selected']['temperature']
+                          default=config['default']['temperature']
                           ),
             inquirer.List('extractor',
                           message="Set answer extractor",
                           choices=config['extractors'],
-                          default=config['selected']['extractor']
+                          default=config['default']['extractor']
                           ),
             inquirer.List('equivalence',
                           message="Set equivalence relation",
                           choices=config['equivalences'],
-                          default=config['selected']['equivalence']
+                          default=config['default']['equivalence']
                           ),
         ]
         config['selected'] = inquirer.prompt(questions)
         with open(user_config_file, 'w') as f:
             yaml.dump(config, f)
     else:
-        execute_jobs(arguments, config)
+        settings = dict()
+
+        if arguments.query:
+            inputs = [(UNNAMED_TASK, arguments.query)]
+        elif (not arguments.input and
+              not arguments.query):
+            inputs = [(UNNAMED_TASK, sys.stdin.read())]
+        else:
+            inputs = [('label', 'content')]
+
+        if arguments.models:
+            settings['models'] = arguments.models
+        else:
+            settings['models'] = [config['default']['model']]
+
+        if arguments.temperature:
+            settings['temperature'] = str(arguments.temperature)
+        else:
+            settings['temperature'] = [config['default']['temperature']]
+
+        if arguments.num_responses:
+            settings['num_responses'] = arguments.num_responses
+        else:
+            settings['num_responses'] = 1
+
+        if (settings['num_responses'] <= 1 and
+            len(settings['models']) <= 1 and
+            inputs[0][0] == UNNAMED_TASK and
+            not arguments.output):
+            stream_response(inputs[0][1], settings['models'][0], settings['temperature'], config)
+        else:
+            execute_batch_jobs(inputs, settings, arguments.output, config)
 
 
 if __name__ == "__main__":

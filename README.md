@@ -41,7 +41,7 @@ To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with
 The responses will be organized as follows:
 
     output
-    └── unnamed
+    └── __unnamed__
         ├─── qwen2.5-7b-instruct_1.0
         │   ├── 0.md
         ...
@@ -56,7 +56,7 @@ To query a model with prompts contained in the files `a.md` and `b.md` (or any f
 
     llm-query -i *.md -o output
 
-If the query is provided via stdin or as an argument, the task will be named `unnamed`. If the query is from a file, the task name will be derived from the file path, with all `/` characters replaced by double underscores `__`.
+If the query is provided via stdin or as an argument, the task will be named `__unnamed__`. If the query is from a file, the task name will be derived from the file path, with all `/` characters replaced by double underscores `__`.
 
 
 An output directory must be explicitly provided (e.g. `-o output`) if any of the following conditions are true:
@@ -91,8 +91,10 @@ There are built-in helper functions to simplify extracting answers or code. Thes
 To analyze the distribution of responses (across one or more models and/or inputs), use the following command:
 
     llm-query -d output/
-
-Before computing the distribution of responses, answer extraction is performed. This uses the extractor configured in the prompt or with the `-s` or `--extractor` option to ensure that only the relevant part of each response is considered for distribution analysis.
+    
+A distribution can be computed for a subset of responses:
+    
+    llm-query -d output/a.md/qwen2.5-7b-instruct_1.0
 
 To compute the distribution, answers are grouped into equivalence classes. This equivalence is defined via a shell command that exits with a zero status code when two answers are equivalent. The equivalence relation can be configured:
 
@@ -106,6 +108,10 @@ The evaluation mode is enabled with the `-e` option and evaluates previously com
 To evaluate the responses stored in the output directory by checking if they are equal to `Beijing`, and print an evaluation table, use:
 
     llm-query -e output --equal Beijing
+    
+Evalation can be done for a subset of responses:
+    
+    llm-query -e output/a.md/qwen2.5-7b-instruct_1.0 --equal Beijing
     
 You can also compute and evaluate a response on-the-fly. If the response matches the evaluation criteria, the command will terminate with a zero exit code.
 
