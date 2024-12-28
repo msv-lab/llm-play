@@ -56,7 +56,7 @@ To query a model with prompts contained in the files `a.md` and `b.md` (or any f
 
     llm-query -i *.md -o output
 
-If the query is provided via stdin or as an argument, the task will be named unnamed. If the query is from a file, the task name will be derived from the file path, with all `/` characters replaced by double underscores `__`.
+If the query is provided via stdin or as an argument, the task will be named `unnamed`. If the query is from a file, the task name will be derived from the file path, with all `/` characters replaced by double underscores `__`.
 
 
 An output directory must be explicitly provided (e.g. `-o output`) if any of the following conditions are true:
@@ -103,7 +103,7 @@ To compute the distribution, answers are grouped into equivalence classes. This 
 
 The evaluation mode is enabled with the `-e` option and evaluates previously computed responses against specified criteria.
 
-To evaluate the responses stored in the output directory by checking if they are equal to `Beijing` and pring an evaluation table, use:
+To evaluate the responses stored in the output directory by checking if they are equal to `Beijing`, and print an evaluation table, use:
 
     llm-query -e output --equal Beijing
     
