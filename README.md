@@ -109,7 +109,7 @@ To evaluate the responses stored in the output directory by checking if they are
     
 You can also compute and evaluate a response on-the-fly. If the response matches the evaluation criteria, the command will terminate with a zero exit code.
 
-    llm-query "What is the capital of China?" --equal Beijing
+    llm-query "What is the capital of China?" -a --equal Beijing
 
 When evaluating responses on-the-fly without explicitly enabling `-e` (evaluation mode) or specifying `-o` (an output directory), responses are saved in a temporary directory.
 
