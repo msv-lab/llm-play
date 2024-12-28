@@ -22,7 +22,7 @@ Write answer to `output.md`:
 
     llm-query "What is the capital of China?" > output.md
     
-Set default model, temperature, etc (written to `~/.llm_query.ini`):
+Set default model, temperature, etc (written to `~/.llm_query.yaml`):
 
     llm-query -s
     
@@ -97,11 +97,11 @@ The discribution is computed over equivalence classes of answers. The equivalenc
     
 ## Evaluating Results
 
-Evaluation is enabled using the options `--eval` and `--equals`.
+Evaluation is enabled using the options `-e` and `--equals`.
 
 This command will output an evaluation table for previously computed responses, checking if they are equal to `Beijing`:
 
-    llm-query --eval output --equals Beijing
+    llm-query -e output --equals Beijing
     
 This command will print the evaluation table for only one response, and will also terminate with the zero exit code if the answer is correct:
 
