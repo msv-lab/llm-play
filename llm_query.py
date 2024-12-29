@@ -14,12 +14,20 @@ from tqdm import tqdm
 import InquirerPy
 from openai import OpenAI
 
-DEFAULT_CONFIG = r"""
+
+ZERO_SHOT_COT_DIRECTIVE = "Let's think step by step."
+ANSWER_FORMAT_DIRECTIVE = "Wrap the final answer with <answer> </answer>."
+ANSWER_EXTRACTOR = r"sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_FILE%%"
+CODE_EXTRACTOR = r"awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%ESCAPED_FILE%%"
+
+
+DEFAULT_CONFIG = fr"""
 default:
   model: qwen2.5-72b-instruct
   temperature: 1.0
   extractor: ID
   equivalence: TRIMMED_CASE_INSENSITIVE
+  directives: []
 providers:
   Aliyun:
     API: OpenAI
@@ -79,9 +87,14 @@ models:
 extractors:
   - ID
   - |-
-    sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_FILE%%
+    {ANSWER_EXTRACTOR}
   - |-
-    awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%ESCAPED_FILE%%
+    {CODE_EXTRACTOR}
+directives:
+  - |-
+    {ZERO_SHOT_COT_DIRECTIVE}
+  - |-
+    {ANSWER_FORMAT_DIRECTIVE}
 equivalences:
   - ID
   - TRIMMED_CASE_INSENSITIVE
@@ -135,27 +148,6 @@ def stream_response(prompt, model, temperature, config):
 
     if os.isatty(sys.stdout.fileno()):
         print()
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="LLM Query Interface")
-    parser.add_argument("query", nargs='?', type=str, help="Query string")
-    parser.add_argument("-i", "--input", nargs='+', type=str, help="Input files")
-    parser.add_argument("-o", "--output", type=str, help="Output directory")
-    parser.add_argument("-m", "--models", nargs='+', type=str, help="List of models to query")
-    parser.add_argument("-t", "--temperature", type=float, help="Temperature for model generation")
-    parser.add_argument("-n", "--num-responses", type=int, help="Number of responses to generate")
-    parser.add_argument("--extractor", type=str, help="Answer extraction shell command")
-    parser.add_argument("-a", "--answer", action="store_true", help="Answer question")
-    parser.add_argument("-c", "--code", action="store_true", help="Generate code")
-    parser.add_argument("-d", "--distribution", type=str, help="Compute distribution of responses in the directory")
-    parser.add_argument("--equivalence", type=str, help="Equivalence relation shell command")
-    parser.add_argument("-e", "--eval", type=str, help="Evaluate responses in the directory")
-    parser.add_argument("--equal", type=str, help="Check equivalence of responses to the specified value")
-    parser.add_argument("--evalautor", type=str, help="Evaluator shell command")
-    parser.add_argument("-p", "--predicate", action="store_true", help="Evaluate truthfulness of the predicate")
-    parser.add_argument("-s", "--set", action="store_true", help="Set default options")
-    return parser.parse_args()
 
 
 def recreate_directory(path):
@@ -214,6 +206,76 @@ def extract(response, extractor, task):
         return result.stdout
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="LLM Query Interface")
+    parser.add_argument("query", nargs='?', type=str, help="Query string")
+    parser.add_argument("-i", "--inputs", nargs='+', type=str, help="Input files")
+    parser.add_argument("-o", "--output", type=str, help="Output directory")
+    parser.add_argument("-m", "--models", nargs='+', type=str, help="List of models to query")
+    parser.add_argument("-t", "--temperature", type=float, help="Temperature for model generation")
+    parser.add_argument("-n", "--num-responses", type=int, help="Number of responses to generate")
+    parser.add_argument("--extractor", type=str, help="Answer extraction shell command")
+    parser.add_argument("-a", "--answer", action="store_true", help="Answer question")
+    parser.add_argument("-c", "--code", action="store_true", help="Generate code")
+    parser.add_argument("-d", "--distribution", type=str, help="Compute distribution of responses in the directory")
+    parser.add_argument("--equivalence", type=str, help="Equivalence relation shell command")
+    parser.add_argument("-e", "--eval", type=str, help="Evaluate responses in the directory")
+    parser.add_argument("--equal", type=str, help="Check equivalence of responses to the specified value")
+    parser.add_argument("--evalautor", type=str, help="Evaluator shell command")
+    parser.add_argument("-p", "--predicate", action="store_true", help="Evaluate truthfulness of the predicate")
+    parser.add_argument("-s", "--setup", action="store_true", help="Set default options")
+    return parser.parse_args()
+
+
+def validate_arguments(arguments):
+    if (((arguments.num_responses and arguments.num_responses > 1) or
+         (arguments.models and len(arguments.models) > 1) or
+         (arguments.inputs and len(arguments.inputs) > 1)) and
+        not arguments.output):
+        print("for multiple responses/models/inputs, the output directory needs to be specified", file=sys.stderr)
+        exit(1)
+
+    if sum([bool(arguments.query),
+            bool(arguments.inputs),
+            bool(arguments.distribution),
+            bool(arguments.eval)]) > 1:
+        print("choose only one of (1) query string, (2) input files, (3) response distribution, (4) response evaluation", file=sys.stderr)
+        exit(1)
+
+    if ((arguments.answer or arguments.code) and arguments.extractor):
+        print("the answer/code options cannot be used with a custom extractor", file=sys.stderr)
+        exit(1)
+
+    if (arguments.code and arguments.answer):
+        print("the code and the answer options are mutually exclusive", file=sys.stderr)
+        exit(1)
+
+
+def process_input_files(file_list):
+    label_content_pairs = []
+    seen_labels = set()
+
+    for file_path in file_list:
+        base_name = os.path.basename(file_path)
+        label = os.path.splitext(base_name)[0]
+
+        if label in seen_labels:
+            print(f"duplicate input label: '{label}'", file=sys.stderr)
+            sys.exit(1)
+
+        seen_labels.add(label)
+
+        try:
+            with open(file_path, 'r') as file:
+                content = file.read()
+                label_content_pairs.append((label, content))
+        except Exception as e:
+            print(f"error reading file '{file_path}': {e}", file=sys.stderr)
+            sys.exit(1)
+
+    return label_content_pairs
+
+
 def main():
     user_config_file = os.path.expanduser("~") + "/.llm_query.yaml"
 
@@ -224,44 +286,40 @@ def main():
         config = yaml.safe_load(DEFAULT_CONFIG)
 
     arguments = parse_args()
-
-    if (((arguments.num_responses and arguments.num_responses > 1) or
-         (arguments.models and len(arguments.models) > 1) or
-         (arguments.input and len(arguments.input) > 1)) and
-        not arguments.output):
-        print("the output directory needs to be specified with -o/--output", file=sys.stderr)
-        exit(1)
-
-    if arguments.query and arguments.input:
-        print("specify either the query string, or the input files with -i/-input, not both", file=sys.stderr)
-        exit(1)
-
-    if arguments.set:
+    validate_arguments(arguments)
+       
+    if arguments.setup:
         t = InquirerPy.prompt([
                 {
                     "type": "list",
                     "name": "model",
-                    "message": "Set model",
+                    "message": "Query model:",
                     "choices": [entry['name'] for entry in config['models']],
                     "default": config['default']['model']
                 },
                 {
                     "type": "input",
                     "name": "temperature",
-                    "message": "Set model temperature",
+                    "message": "Set model temperature:",
                     "default": str(config['default']['temperature'])
+                },
+                {
+                    "type": "checkbox",
+                    "name": "directives",
+                    "message": "Append directives to the prompt:",
+                    "choices": config['directives']
                 },
                 {
                     "type": "list",
                     "name": "extractor",
-                    "message": "Set answer extractor",
+                    "message": "Extract asnwers with:",
                     "choices": config['extractors'],
                     "default": config['default']['extractor']
                 },
                 {
                     "type": "list",
                     "name": "equivalence",
-                    "message": "Set equivalence relation",
+                    "message": "Cluster answers with:",
                     "choices": config['equivalences'],
                     "default": config['default']['equivalence']
                 },
@@ -271,15 +329,18 @@ def main():
         with open(user_config_file, 'w') as f:
             yaml.dump(config, f, width=float("inf"))
     else:
-        settings = dict()
 
         if arguments.query:
             inputs = [(UNNAMED_TASK, arguments.query)]
-        elif (not arguments.input and
+        elif (not arguments.inputs and
               not arguments.query):
             inputs = [(UNNAMED_TASK, sys.stdin.read())]
         else:
-            inputs = [('label', 'content')]
+            inputs = process_input_files(arguments.inputs)
+
+        settings = dict()
+
+        settings['directives'] = config['default']['directives']
 
         if arguments.models:
             settings['models'] = arguments.models
@@ -300,6 +361,23 @@ def main():
             settings['extractor'] = arguments.extractor
         else:
             settings['extractor'] = config['default']['extractor']
+
+        if arguments.answer:
+            settings['extractor'] = ANSWER_EXTRACTOR
+            if ANSWER_FORMAT_DIRECTIVE not in settings['directives']:
+                settings['directives'].append(ANSWER_FORMAT_DIRECTIVE)
+
+        if arguments.code:
+            settings['extractor'] = CODE_EXTRACTOR
+
+        if len(settings['directives']) > 0:
+            new_inputs = []
+            for label, prompt in inputs:
+                new_prompt = prompt
+                for d in settings['directives']:
+                    new_prompt += " " + d
+                new_inputs.append((label, new_prompt))
+            inputs = new_inputs
 
         if (settings['num_responses'] <= 1 and
             len(settings['models']) <= 1 and
