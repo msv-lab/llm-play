@@ -1,3 +1,20 @@
+# llm-query is a utility for small-scale experimentation with LLMs in UNIX environment.
+# Copyright (C) 2025 Sergey Mechtaev
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or (at
+# your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 from enum import Enum
 
 import shlex
@@ -379,3 +396,42 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# import pandas as pd
+# from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
+
+# # Load the true labels and predicted labels from the CSV files
+# ground_truth_file = "ground_truth.csv"  # Path to the ground truth file
+# predictions_file = "predictions.csv"  # Path to the predictions file
+
+# # Read the CSV files
+# ground_truth = pd.read_csv(ground_truth_file)
+# predictions = pd.read_csv(predictions_file)
+
+# # Ensure the column names match the actual structure of your CSV files
+# true_labels = ground_truth['true_label']
+# predicted_labels = predictions['predicted_label']
+
+# # Compute classification metrics
+# accuracy = accuracy_score(true_labels, predicted_labels)
+# precision = precision_score(true_labels, predicted_labels, average='weighted')  # Use 'weighted' for multiclass
+# recall = recall_score(true_labels, predicted_labels, average='weighted')
+# f1 = f1_score(true_labels, predicted_labels, average='weighted')
+# conf_matrix = confusion_matrix(true_labels, predicted_labels)
+
+# # Generate a comprehensive classification report
+# class_report = classification_report(true_labels, predicted_labels)
+
+# # Print the results
+# print("Classification Metrics:")
+# print(f"Accuracy: {accuracy:.2f}")
+# print(f"Precision: {precision:.2f}")
+# print(f"Recall: {recall:.2f}")
+# print(f"F1 Score: {f1:.2f}")
+# print("\nConfusion Matrix:")
+# print(conf_matrix)
+
+# print("\nClassification Report:")
+# print(class_report)
+    
