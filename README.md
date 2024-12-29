@@ -1,6 +1,26 @@
 # llm-query
 
-An utility for small-scale experimentation with LLMs. It enables users to query models, extract answers from responses, perform evaluations, and compare outputs.
+An utility for small-scale experimentation with LLMs in UNIX. It supports the following workflow:
+
+```mermaid
+flowchart LR
+    A["`**Response Generation:**
+    - Multiple models
+    - Multiple tasks
+    - Multiple responses`"] --> B["`**Data Extraction:**
+    - Answer extraction
+    - Code extraction
+    - Custom extractors`"]
+    B --> C["`**Analysis:**
+    - Distribution
+    - Uncertainty measures
+    - Semantic clusters`"]
+    B --> D["`**Evaluation:**
+    - Regression Metrics
+    - Classification Metrics
+    - Testing`"]
+```
+
 
 ## Installation
 
@@ -56,7 +76,7 @@ To query a model with prompts contained in the files `a.md` and `b.md` (or any f
 
     llm-query -i *.md -o output
 
-When a query is supplied through stdin or as a command-line argument, the task is automatically assigned the name `__unnamed__`. However, if the query originates from a file, the task will adopt the file's name (excluding the extension) as its name. In cases where multiple files are provided, ensure that their names are unique to avoid conflicts.
+When a query is supplied through stdin or as a command-line argument, the task is automatically assigned the identifier `__unnamed__`. However, if the query originates from a file, the task will adopt the file's name (excluding the extension) as its identifier. In cases where multiple files are provided, ensure that their names are unique to avoid conflicts.
 
 An output directory must be explicitly provided (e.g. `-o output`) when querying multiple models/responses/input files.
 
@@ -66,7 +86,7 @@ Extractors are shell commands used to extract specific answers from responses. T
 
 Suppose the following extractor is selected using the `-s` option:
 
-    sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_FILE%%
+    sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_OUTPUT_FILE%%
 
 This extractor searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
 
@@ -118,7 +138,7 @@ The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt 
 
 Instead of comparing responses to a value with `--equal`, you can specify a custom evaluator using the `--evaluator` option. A custom evaluator is a shell command that terminates with a zero exit code if the response passes evaluation.
 
-    llm-query -e output --evaluator 'wc -w <<< %%ESCAPED_ANSWER%% | grep -q ^1$'
+    llm-query -e output --evaluator 'wc -w <<< %%ESCAPED_OUTPUT%% | grep -q ^1$'
 
 This example evaluates whether each response contains exactly one word.
 
@@ -138,10 +158,12 @@ The shell template language allows dynamic substitution of specific placeholders
 
 Available placeholders:
 
-- `%%ANSWER%%` - replaced with the raw answer.
-- `%%FILE%%` - replaced with a path to a temporary file containing the answer.
-- `%%TASK%%` - replaced with the task name.
+- `%%OUTPUT%%` - replaced with the raw output.
+- `%%OUTPUT_FILE%%` - replaced with a path to a temporary file containing the output.
+- `%%INPUT%%` - replaced with the raw input.
+- `%%INPUT_FILE%%` - replaced with a path to a temporary file containing the input.
+- `%%TASK_ID%%` - replaced with the task id.
 
-For commands that require multiple answers, indexed placeholders are provided, e.g. `%%ANSWER1%%`, `%%ANSWER2%%`, `%%FILE1%%` and `%%FILE2%%`.
+For commands that require multiple outputs, indexed placeholders are provided, e.g. `%%OUTPUT1%%`, `%%OUTPUT2%%`.
 
-Variants of shell-escaped placeholders are available for safety when handling special characters, e.g. `%%ESCAPED_ANSWER%%`, `%%ESCAPED_FILE%%`, `%%ESCAPED_TASK%%`.
+Variants of shell-escaped placeholders are available for safety when handling special characters, e.g. `%%ESCAPED_OUTPUT%%`.

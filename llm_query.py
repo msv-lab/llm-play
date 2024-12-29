@@ -15,10 +15,9 @@ import InquirerPy
 from openai import OpenAI
 
 
-ZERO_SHOT_COT_DIRECTIVE = "Let's think step by step."
 ANSWER_FORMAT_DIRECTIVE = "Wrap the final answer with <answer> </answer>."
-ANSWER_EXTRACTOR = r"sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_FILE%%"
-CODE_EXTRACTOR = r"awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%ESCAPED_FILE%%"
+ANSWER_EXTRACTOR = r"sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_OUTPUT_FILE%%"
+CODE_EXTRACTOR = r"awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%ESCAPED_OUTPUT_FILE%%"
 
 
 DEFAULT_CONFIG = fr"""
@@ -27,7 +26,6 @@ default:
   temperature: 1.0
   extractor: ID
   equivalence: TRIMMED_CASE_INSENSITIVE
-  directives: []
 providers:
   Aliyun:
     API: OpenAI
@@ -90,16 +88,11 @@ extractors:
     {ANSWER_EXTRACTOR}
   - |-
     {CODE_EXTRACTOR}
-directives:
-  - |-
-    {ZERO_SHOT_COT_DIRECTIVE}
-  - |-
-    {ANSWER_FORMAT_DIRECTIVE}
 equivalences:
   - ID
   - TRIMMED_CASE_INSENSITIVE
   - |-
-    llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: "%%ANSWER1%%" and "%%ANSWER2%%"?' -p
+    llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: "%%OUTPUT1%%" and "%%OUTPUT2%%"?' -p
 """
 
 
@@ -170,9 +163,9 @@ def execute_batch_jobs(inputs, settings, output, config):
                     pbar.update()
 
 
-def instantiate_shell_template(template, answers=None, files=None, task=None):
-    if isinstance(answers, str) or answers is None:
-        answers = [answers]
+def instantiate_shell_template(template, outputs=None, files=None, task=None):
+    if isinstance(outputs, str) or outputs is None:
+        outputs = [outputs]
     if isinstance(files, str) or files is None:
         files = [files]
 
@@ -180,19 +173,23 @@ def instantiate_shell_template(template, answers=None, files=None, task=None):
         value = item_list[index]
         return shlex.quote(value) if escape and value is not None else value
 
-    if len(answers) * len(files) == 1:
-        template = template.replace(f"%%ANSWER%%", get_replacement(answers, 0))
-        template = template.replace(f"%%ESCAPED_ANSWER%%", get_replacement(answers, 0, escape=True))
-        template = template.replace(f"%%FILE%%", get_replacement(files, 0))
-        template = template.replace(f"%%ESCAPED_FILE%%", get_replacement(files, 0, escape=True))
+    if len(outputs) * len(files) == 1:
+        template = template.replace(f"%%OUTPUT%%", get_replacement(outputs, 0))
+        template = template.replace(f"%%ESCAPED_OUTPUT%%", get_replacement(outputs, 0, escape=True))
+        template = template.replace(f"%%OUTPUT_FILE%%", get_replacement(files, 0))
+        template = template.replace(f"%%ESCAPED_OUTPUT_FILE%%", get_replacement(files, 0, escape=True))
     else:
-        for i in range(max(len(answers), len(files)), 0, -1):
-            template = template.replace(f"%%ANSWER{i}%%", get_replacement(answers, i - 1))
-            template = template.replace(f"%%ESCAPED_ANSWER{i}%%", get_replacement(answers, i - 1, escape=True))
-            template = template.replace(f"%%FILE{i}%%", get_replacement(files, i - 1))
-            template = template.replace(f"%%ESCAPED_FILE{i}%%", get_replacement(files, i - 1, escape=True))
-    template = template.replace(f"%%TASK%%", get_replacement([task], 0))
-    template = template.replace(f"%%ESCAPED_TASK%%", get_replacement([task], 0, escape=True))
+        for i in range(max(len(outputs), len(files)), 0, -1):
+            template = template.replace(f"%%OUTPUT{i}%%", get_replacement(outputs, i - 1))
+            template = template.replace(f"%%ESCAPED_OUTPUT{i}%%", get_replacement(outputs, i - 1, escape=True))
+            template = template.replace(f"%%OUTPUT_FILE{i}%%", get_replacement(files, i - 1))
+            template = template.replace(f"%%ESCAPED_OUTPUT_FILE{i}%%", get_replacement(files, i - 1, escape=True))
+    template = template.replace(f"%%INPUT%%", get_replacement(outputs, 0))
+    template = template.replace(f"%%ESCAPED_INPUT%%", get_replacement(outputs, 0, escape=True))
+    template = template.replace(f"%%INPUT_FILE%%", get_replacement(files, 0))
+    template = template.replace(f"%%ESCAPED_INPUT_FILE%%", get_replacement(files, 0, escape=True))
+    template = template.replace(f"%%TASK_ID%%", get_replacement([task], 0))
+    template = template.replace(f"%%ESCAPED_TASK_ID%%", get_replacement([task], 0, escape=True))
 
     return template
 
@@ -201,7 +198,7 @@ def extract(response, extractor, task):
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_file.write(response.encode())
         temp_file.flush()
-        cmd = instantiate_shell_template(extractor, answers=response, files=temp_file.name, task=task)
+        cmd = instantiate_shell_template(extractor, outputs=response, files=temp_file.name, task=task)
         result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         return result.stdout
 
@@ -304,12 +301,6 @@ def main():
                     "default": str(config['default']['temperature'])
                 },
                 {
-                    "type": "checkbox",
-                    "name": "directives",
-                    "message": "Append directives to the prompt:",
-                    "choices": config['directives']
-                },
-                {
                     "type": "list",
                     "name": "extractor",
                     "message": "Extract asnwers with:",
@@ -340,8 +331,6 @@ def main():
 
         settings = dict()
 
-        settings['directives'] = config['default']['directives']
-
         if arguments.models:
             settings['models'] = arguments.models
         else:
@@ -364,20 +353,13 @@ def main():
 
         if arguments.answer:
             settings['extractor'] = ANSWER_EXTRACTOR
-            if ANSWER_FORMAT_DIRECTIVE not in settings['directives']:
-                settings['directives'].append(ANSWER_FORMAT_DIRECTIVE)
+            new_inputs = []
+            for label, prompt in inputs:
+                new_inputs.append((label, prompt + " " + ANSWER_FORMAT_DIRECTIVE))
+            inputs = new_inputs
 
         if arguments.code:
             settings['extractor'] = CODE_EXTRACTOR
-
-        if len(settings['directives']) > 0:
-            new_inputs = []
-            for label, prompt in inputs:
-                new_prompt = prompt
-                for d in settings['directives']:
-                    new_prompt += " " + d
-                new_inputs.append((label, new_prompt))
-            inputs = new_inputs
 
         if (settings['num_responses'] <= 1 and
             len(settings['models']) <= 1 and
