@@ -14,17 +14,16 @@ flowchart LR
     B --> C["`**Analysis:**
     - Comparing distributions
     - Uncertainty measures
-    - Confidence measures [TODO]
     - Semantic clusters`"]
     B --> D["`**Evaluation:**
-    - Regression Metrics [TODO]
     - Classification Metrics
+    - Pass@K
     - Custom Evaluators`"]
 ```
 
 ## Installation
 
-Set one or more of the following API keys as environment variables, depending on the services you plan to use:
+Set some of the following API keys as environment variables, depending on the services you plan to use:
 
 - `DASHSCOPE_API_KEY`
 - `DEEPSEEK_API_KEY`
@@ -96,7 +95,7 @@ A response is treated as not containing any answer iff these two condition hold:
 
 The extracted data is saved into "txt" files. The file extension can be specified using the `--extension` options, e.g. `--extension py` resulting in:
 
-    classes
+    data
     └── qwen2.5-7b-instruct_1.0
         ├── __unnamed__.md
         └── __unnamed__
