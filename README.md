@@ -1,6 +1,6 @@
 # llm-query
 
-A utility for small-scale experimentation with LLMs in UNIX environment. It supports the following workflow:
+A utility for experimenting with LLMs for UNIX hackers. It supports the following workflow:
 
 ```mermaid
 flowchart LR
@@ -12,8 +12,9 @@ flowchart LR
     - Code extraction
     - Custom extractors`"]
     B --> C["`**Analysis:**
-    - Distribution
+    - Comparing distributions
     - Uncertainty measures
+    - Confidence measures
     - Semantic clusters`"]
     B --> D["`**Evaluation:**
     - Regression Metrics
@@ -103,23 +104,31 @@ Data can be extracted on-the-fly while querying LLMs. Assuming that the answer e
 
 There are built-in helper functions to simplify extracting answers or code when performed on-the-fly. These helpers automatically augment the prompt and apply the necessary extractors to extract the relevant parts of the response.
 
-    llm-query "What is the capital of China?" -a
-    llm-query "Write a Python function f(n: int) -> int that computes the n-th Catalan number" -c
+    llm-query "What is the capital of China?" --answer
+    llm-query "Write a Python function f(n: int) -> int that computes the n-th Catalan number" --code
+    
+## Clustering
+
+To group answers into equivalence classes, use the following command:
+
+    llm-query -c output -o classes --equivalence ""
+
+
+This equivalence is defined via a shell command that exits with a zero status code when two answers are equivalent. The equivalence relation can be configured:
+
+- Using the `-s` option to select a predefined equivalence command.
+- Or, specifying a custom equivalence command using the `--equivalence` option.
+
 
 ## Response Analysis
 
-To analyze the distribution of responses (across one or more models and/or inputs), use the following command:
+To analyze the distribution of equivalence classes of responses (across one or more models and/or inputs), use the following command:
 
     llm-query -d output/
 
 A distribution can be computed for a subset of responses:
 
     llm-query -d output/a.md/qwen2.5-7b-instruct_1.0
-
-To compute the distribution, answers are grouped into equivalence classes. This equivalence is defined via a shell command that exits with a zero status code when two answers are equivalent. The equivalence relation can be configured:
-
-- Using the `-s` option to select a predefined equivalence command.
-- Or, specifying a custom equivalence command using the `--equivalence` option.
 
 To analyse difference between distribution, use the following command:
 
@@ -151,15 +160,15 @@ where `ground_truth.csv` contains two columns: task ids and ground truth labels.
 
 When a single response is queried from an single model, it can be evaluated on-the-fly. If the response matches the evaluation criteria, the command will terminate with a zero exit code.
 
-    llm-query "What is the capital of China?" -a --equal Beijing
+    llm-query "What is the capital of China?" --answer --equal Beijing
     
-This helper function acts as a predicate over `$CITY`:
+This helper option acts as a predicate over `$CITY`:
 
-    llm-query "Is $CITY the capital of China?" -p
+    llm-query "Is $CITY the capital of China?" --predicate
 
 It is equivalent to the following:
 
-    llm-query "Is $CITY the capital of China? Respond Yes or No." -a --equal Yes >/dev/null
+    llm-query "Is $CITY the capital of China? Respond Yes or No." --answer --equal Yes >/dev/null
 
 ### Custom Evaluator
 
