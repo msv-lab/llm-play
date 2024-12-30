@@ -109,7 +109,7 @@ equivalences:
   - ID
   - TRIMMED_CASE_INSENSITIVE
   - |-
-    llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: "%%OUTPUT1%%" and "%%OUTPUT2%%"?' -p
+    llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: "%%OUTPUT1%%" and "%%OUTPUT2%%"?' --predicate
 """
 
 
