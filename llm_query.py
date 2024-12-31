@@ -15,8 +15,6 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-from enum import Enum
-
 import shlex
 import os
 import sys
@@ -48,7 +46,7 @@ providers:
     API: OpenAI
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     key_env_variable: DASHSCOPE_API_KEY
-    support_multiple_responses: True
+    support_multiple_responses: False
   DeepSeek:
     API: OpenAI
     base_url: https://api.deepseek.com
@@ -118,10 +116,6 @@ equivalences:
 UNNAMED_TASK = '__unnamed__'
 
 
-def sanitize_path_to_filename(path: str) -> str:
-    return path.replace("/", "__").replace("\\", "__")
-
-
 def get_provider_by_model(model, config):
     for m in config['models']:
         if model == m['name']:
@@ -145,7 +139,7 @@ def get_responses(prompt, model, temperature, n, config):
         return [c.message.content for c in completion.choices]
     else:
         responses = []
-        for i in n:
+        for i in range(n):
             completion = client.chat.completions.create(
                 model=model,
                 messages=[
@@ -183,19 +177,28 @@ def recreate_directory(path):
 
 def execute_batch_jobs(inputs, settings, output, config):
     recreate_directory(output)
-    with tqdm(total=len(settings['models']) * len(inputs)) as pbar:
-        for im, model in enumerate(settings['models']):
-            model_path = output + "/" + model + "_" + str(settings['temperature'])
-            os.makedirs(model_path)
-            for name, prompt in inputs:
-                with open(f"{model_path}/{name}.md", "w") as file:
-                    file.write(prompt)
-                task_path = model_path + "/" + name
-                os.makedirs(task_path)
-                for i, response in enumerate(get_responses(prompt, model, settings['temperature'], settings['num_responses'], config)):
-                    with open(f"{task_path}/{i}.md", "w") as file:
-                        file.write(response)
+    num_jobs = len(settings['models']) * len(inputs)
+    if num_jobs > 1:
+        pbar = tqdm(total=num_jobs, ascii=True)
+    for im, model in enumerate(settings['models']):
+        model_path = output + "/" + model + "_" + str(settings['temperature'])
+        os.makedirs(model_path)
+        for name, prompt in inputs:
+            with open(f"{model_path}/{name}.md", "w") as file:
+                file.write(prompt)
+            task_path = model_path + "/" + name
+            os.makedirs(task_path)
+            for i, response in enumerate(get_responses(prompt, model, settings['temperature'], settings['num_responses'], config)):
+                if settings['extractor'] != '__ID__':
+                    result = extract(response, prompt, settings['extractor'], name)
+                else:
+                    result = response
+                with open(f"{task_path}/{i}.md", "w") as file:
+                    file.write(result)
+                if num_jobs > 1:   
                     pbar.update()
+    if num_jobs > 1:
+        pbar.close()
 
 
 def instantiate_shell_template(t, prompt, prompt_file, outputs, output_files, task):
@@ -225,14 +228,16 @@ def instantiate_shell_template(t, prompt, prompt_file, outputs, output_files, ta
     return t
 
 
-def extract(response, extractor, task):
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_file.write(response.encode())
-        temp_file.flush()
-        #TODO: support prompts
-        cmd = instantiate_shell_template(extractor, "", "", outputs=[response], output_files=[temp_file.name], task=task)
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        return result.stdout
+def extract(response, prompt, extractor, task):
+    with tempfile.NamedTemporaryFile() as prompt_file:
+        prompt_file.write(prompt.encode())
+        prompt_file.flush()
+        with tempfile.NamedTemporaryFile() as output_file:
+            output_file.write(response.encode())
+            output_file.flush()
+            cmd = instantiate_shell_template(extractor, prompt, prompt_file.name, outputs=[response], output_files=[output_file.name], task=task)
+            result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            return result.stdout
 
 
 def parse_args():
@@ -244,6 +249,7 @@ def parse_args():
     parser.add_argument("-t", "--temperature", type=float, help="Temperature for model generation")
     parser.add_argument("-n", "--num-responses", type=int, help="Number of responses to generate")
     parser.add_argument("--extractor", type=str, help="Answer extraction shell command")
+    parser.add_argument("--extension", type=str, help="File extension for extracted data")
     parser.add_argument("-a", "--answer", action="store_true", help="Answer question")
     parser.add_argument("-c", "--code", action="store_true", help="Generate code")
     parser.add_argument("-d", "--distribution", type=str, help="Compute distribution of responses in the directory")
@@ -316,7 +322,7 @@ def main():
 
     arguments = parse_args()
     validate_arguments(arguments)
-       
+
     if arguments.setup:
         t = InquirerPy.prompt([
                 {
@@ -401,7 +407,7 @@ def main():
                 stream_response(inputs[0][1], settings['models'][0], settings['temperature'], config)
             else:
                 response = get_response(inputs[0][1], settings['models'][0], settings['temperature'], 1, config)
-                answer = extract(response, settings['extractor'], UNNAMED_TASK)
+                answer = extract(response, inputs[0][1], settings['extractor'], UNNAMED_TASK)
                 print(answer, end="")
                 if os.isatty(sys.stdout.fileno()):
                     print()
