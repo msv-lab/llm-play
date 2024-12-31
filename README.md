@@ -162,7 +162,7 @@ A distribution can be computed for a subset of responses:
     
 This will compute and visualise
 
-- [empirical probability](https://en.wikipedia.org/wiki/Empirical_probability) of samples;
+- [empirical probability](https://en.wikipedia.org/wiki/Empirical_probability) of clusters;
 - semantic uncertainty (semantic entropy) computed over the equivalence classes
 
 Related work on semantic uncertainty:
