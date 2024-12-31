@@ -83,7 +83,7 @@ An output directory must be explicitly provided (e.g. `-o output`) when querying
 
 ## Data Extraction
 
-Extractors are shell commands used to extract specific data from responses. These commands are defined using a shell template language (described below). The special extractor `ID` simply returns the entire response without modification.
+Extractors are shell commands used to extract specific data from responses. These commands are defined using a shell template language (described below). The special extractor `__ID__` simply returns the entire response without modification.
 
 This is to extract text within the tag `<answer> ... </answer>` from all responses in `output`, and save the results into the directory `data`:
 
@@ -148,7 +148,7 @@ The equivalence relation can be configured:
 - Using the `-s` option to select a predefined equivalence command.
 - Or, specifying a custom equivalence command using the `--equivalence` option.
 
-Clustering can also be performed on-the-fly while querying models if any non-trivial equivalence relations is specified. The trivial relation `ID` means syntactic identity and effectively disables clustering.
+Clustering can also be performed on-the-fly while querying models if any non-trivial equivalence relations is specified. The trivial relation `__ID__` means syntactic identity and effectively disables clustering.
 
 ## Response Analysis
 

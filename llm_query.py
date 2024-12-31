@@ -41,27 +41,29 @@ DEFAULT_CONFIG = fr"""
 default:
   model: qwen2.5-72b-instruct
   temperature: 1.0
-  extractor: ID
-  equivalence: TRIMMED_CASE_INSENSITIVE
+  extractor: __ID__
+  equivalence: __ID__
 providers:
   Aliyun:
     API: OpenAI
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     key_env_variable: DASHSCOPE_API_KEY
+    support_multiple_responses: True
   DeepSeek:
     API: OpenAI
     base_url: https://api.deepseek.com
     key_env_variable: DEEPSEEK_API_KEY
-    
+    support_multiple_responses: False
   CloseAI_OpenAI:
     API: OpenAI
     base_url: https://api.openai-proxy.org/v1
     key_env_variable: CLOSEAI_API_KEY
-
+    support_multiple_responses: True
   CloseAI_Anthropic:
     API: Anthropic
     base_url: https://api.openai-proxy.org/anthropic
     key_env_variable: CLOSEAI_API_KEY
+    support_multiple_responses: True
 models:
   -
     name: qwen-max-2024-09-19
@@ -83,7 +85,7 @@ models:
     provider: Aliyun
   -
     name: deepseek-chat
-    provider: Deepseek
+    provider: DeepSeek
   -
     name: o1-2024-12-17
     provider: CloseAI_OpenAI
@@ -100,14 +102,14 @@ models:
     name: claude-3-5-sonnet-20241022
     provider: CloseAI_Anthropic
 extractors:
-  - ID
+  - __ID__
   - |-
     {ANSWER_EXTRACTOR}
   - |-
     {CODE_EXTRACTOR}
 equivalences:
-  - ID
-  - TRIMMED_CASE_INSENSITIVE
+  - __ID__
+  - __TRIMMED_CASE_INSENSITIVE__
   - |-
     llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: "%%OUTPUT1%%" and "%%OUTPUT2%%"?' --predicate
 """
@@ -127,18 +129,31 @@ def get_provider_by_model(model, config):
     raise ValueError(f"no provider for model {model}")
 
 
-def get_response(prompt, model, temperature, config):
+def get_responses(prompt, model, temperature, n, config):
     provider = get_provider_by_model(model, config)
     client = OpenAI(
         api_key=os.getenv(config['providers'][provider]['key_env_variable']),
         base_url=config['providers'][provider]['base_url'],
     )
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[
-            {'role': 'user', 'content': prompt}],
-    )
-    return completion.choices[0].message.content
+    if config['providers'][provider]['support_multiple_responses']:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {'role': 'user', 'content': prompt}],
+            n=n
+        )
+        return [c.message.content for c in completion.choices]
+    else:
+        responses = []
+        for i in n:
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {'role': 'user', 'content': prompt}],
+                n=1
+            )
+            responses.append(completion.choices[0].message.content)
+        return responses
 
 
 def stream_response(prompt, model, temperature, config):
@@ -168,54 +183,54 @@ def recreate_directory(path):
 
 def execute_batch_jobs(inputs, settings, output, config):
     recreate_directory(output)
-    for name, prompt in inputs:
-        with tqdm(total=len(settings['models']) * settings['num_responses']) as pbar:
-            for im, model in enumerate(settings['models']):
-                model_path = output + "/" + model + "_" + settings['temperature']
-                os.makedirs(model_path)
-                for i in range(num_responses):
-                    response = get_response(prompt, model, settings['temperature'], config)
-                    with open(f"{model_path}/{i}.md", "w") as file:
+    with tqdm(total=len(settings['models']) * len(inputs)) as pbar:
+        for im, model in enumerate(settings['models']):
+            model_path = output + "/" + model + "_" + str(settings['temperature'])
+            os.makedirs(model_path)
+            for name, prompt in inputs:
+                with open(f"{model_path}/{name}.md", "w") as file:
+                    file.write(prompt)
+                task_path = model_path + "/" + name
+                os.makedirs(task_path)
+                for i, response in enumerate(get_responses(prompt, model, settings['temperature'], settings['num_responses'], config)):
+                    with open(f"{task_path}/{i}.md", "w") as file:
                         file.write(response)
                     pbar.update()
 
 
-def instantiate_shell_template(template, outputs=None, files=None, task=None):
-    if isinstance(outputs, str) or outputs is None:
-        outputs = [outputs]
-    if isinstance(files, str) or files is None:
-        files = [files]
+def instantiate_shell_template(t, prompt, prompt_file, outputs, output_files, task):
+    assert(len(outputs) == len(output_files))
 
-    def get_replacement(item_list, index, escape=False):
-        value = item_list[index]
+    def render(value, escape=False):
         return shlex.quote(value) if escape and value is not None else value
 
-    if len(outputs) * len(files) == 1:
-        template = template.replace(f"%%OUTPUT%%", get_replacement(outputs, 0))
-        template = template.replace(f"%%ESCAPED_OUTPUT%%", get_replacement(outputs, 0, escape=True))
-        template = template.replace(f"%%OUTPUT_FILE%%", get_replacement(files, 0))
-        template = template.replace(f"%%ESCAPED_OUTPUT_FILE%%", get_replacement(files, 0, escape=True))
+    if len(outputs) == 1:
+        t = t.replace(f"%%OUTPUT%%", render(outputs[0]))
+        t = t.replace(f"%%ESCAPED_OUTPUT%%", render(outputs[0], escape=True))
+        t = t.replace(f"%%OUTPUT_FILE%%", render(output_files[0]))
+        t = t.replace(f"%%ESCAPED_OUTPUT_FILE%%", render(output_files[0], escape=True))
     else:
-        for i in range(max(len(outputs), len(files)), 0, -1):
-            template = template.replace(f"%%OUTPUT{i}%%", get_replacement(outputs, i - 1))
-            template = template.replace(f"%%ESCAPED_OUTPUT{i}%%", get_replacement(outputs, i - 1, escape=True))
-            template = template.replace(f"%%OUTPUT_FILE{i}%%", get_replacement(files, i - 1))
-            template = template.replace(f"%%ESCAPED_OUTPUT_FILE{i}%%", get_replacement(files, i - 1, escape=True))
-    template = template.replace(f"%%INPUT%%", get_replacement(outputs, 0))
-    template = template.replace(f"%%ESCAPED_INPUT%%", get_replacement(outputs, 0, escape=True))
-    template = template.replace(f"%%INPUT_FILE%%", get_replacement(files, 0))
-    template = template.replace(f"%%ESCAPED_INPUT_FILE%%", get_replacement(files, 0, escape=True))
-    template = template.replace(f"%%TASK_ID%%", get_replacement([task], 0))
-    template = template.replace(f"%%ESCAPED_TASK_ID%%", get_replacement([task], 0, escape=True))
+        for i in range(len(outputs), 0, -1):
+            t = t.replace(f"%%OUTPUT{i}%%", render(outputs[i - 1]))
+            t = t.replace(f"%%ESCAPED_OUTPUT{i}%%", render(outputs[i - 1], escape=True))
+            t = t.replace(f"%%OUTPUT_FILE{i}%%", render(output_files[i - 1]))
+            t = t.replace(f"%%ESCAPED_OUTPUT_FILE{i}%%", render(output_files[i - 1], escape=True))
+    t = t.replace(f"%%PROMPT%%", render(prompt, 0))
+    t = t.replace(f"%%ESCAPED_PROMPT%%", render(prompt, escape=True))
+    t = t.replace(f"%%PROMPT_FILE%%", render(prompt_file))
+    t = t.replace(f"%%ESCAPED_PROMPT_FILE%%", render(prompt_file, escape=True))
+    t = t.replace(f"%%TASK_ID%%", render(task))
+    t = t.replace(f"%%ESCAPED_TASK_ID%%", render(task, escape=True))
 
-    return template
+    return t
 
 
 def extract(response, extractor, task):
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_file.write(response.encode())
         temp_file.flush()
-        cmd = instantiate_shell_template(extractor, outputs=response, files=temp_file.name, task=task)
+        #TODO: support prompts
+        cmd = instantiate_shell_template(extractor, "", "", outputs=[response], output_files=[temp_file.name], task=task)
         result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         return result.stdout
 
@@ -382,10 +397,10 @@ def main():
             len(settings['models']) <= 1 and
             inputs[0][0] == UNNAMED_TASK and
             not arguments.output):
-            if settings['extractor'] == 'ID':
+            if settings['extractor'] == '__ID__':
                 stream_response(inputs[0][1], settings['models'][0], settings['temperature'], config)
             else:
-                response = get_response(inputs[0][1], settings['models'][0], settings['temperature'], config)
+                response = get_response(inputs[0][1], settings['models'][0], settings['temperature'], 1, config)
                 answer = extract(response, settings['extractor'], UNNAMED_TASK)
                 print(answer, end="")
                 if os.isatty(sys.stdout.fileno()):
