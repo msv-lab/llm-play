@@ -14,6 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+from dataclasses import dataclass
+from typing import Dict, Tuple
 
 import shlex
 import os
@@ -23,6 +25,8 @@ import configparser
 import argparse
 import tempfile
 import subprocess
+import re
+from collections import defaultdict
 
 import yaml
 from tqdm import tqdm
@@ -195,7 +199,7 @@ def execute_batch_jobs(inputs, settings, output, config):
                     result = response
                 with open(f"{task_path}/{i}.md", "w") as file:
                     file.write(result)
-                if num_jobs > 1:   
+                if num_jobs > 1:
                     pbar.update()
     if num_jobs > 1:
         pbar.close()
@@ -248,6 +252,7 @@ def parse_args():
     parser.add_argument("-m", "--models", nargs='+', type=str, help="List of models to query")
     parser.add_argument("-t", "--temperature", type=float, help="Temperature for model generation")
     parser.add_argument("-n", "--num-responses", type=int, help="Number of responses to generate")
+    parser.add_argument("-x", "--extract", type=str, help="Extract data in directory")
     parser.add_argument("--extractor", type=str, help="Answer extraction shell command")
     parser.add_argument("--extension", type=str, help="File extension for extracted data")
     parser.add_argument("-a", "--answer", action="store_true", help="Answer question")
@@ -293,23 +298,103 @@ def process_input_files(file_list):
     for file_path in file_list:
         base_name = os.path.basename(file_path)
         label = os.path.splitext(base_name)[0]
-
         if label in seen_labels:
             print(f"duplicate input label: '{label}'", file=sys.stderr)
             sys.exit(1)
-
         seen_labels.add(label)
-
-        try:
-            with open(file_path, 'r') as file:
-                content = file.read()
-                label_content_pairs.append((label, content))
-        except Exception as e:
-            print(f"error reading file '{file_path}': {e}", file=sys.stderr)
-            sys.exit(1)
+        with open(file_path, 'r') as file:
+            content = file.read()
+            label_content_pairs.append((label, content))
 
     return label_content_pairs
 
+
+@dataclass
+class DataStore:
+    # from task_id to prompt
+    prompts: Dict[str, str]
+    # from (model, temperature) -> task_id -> (response_id, class_id, content_file)
+    responses: Dict[Tuple[str, str], Dict[str, Tuple[str, str, str]]]
+
+
+def load_data(path_query):
+    def collect_response_dirs(path):
+        # Returns list of (task id, prompt file path, response dir)
+        result = []
+        entries = os.listdir(path)
+        md_files = { os.path.splitext(entry)[0]: os.path.join(path, entry)
+                     for entry in entries if entry.endswith('.md') }
+        directories = { entry: os.path.join(path, entry)
+                        for entry in entries if os.path.isdir(os.path.join(path, entry)) }
+        for name, md_file_path in md_files.items():
+            if name in directories:
+                result.append((name, md_file_path, directories[name]))
+        return result
+
+    def collect_response_files(response_dir):
+        response_files = []
+        for file_name in os.listdir(response_dir):
+            full_path = os.path.join(response_dir, file_name)
+            if os.path.isfile(full_path):
+                file_parts = file_name.rsplit('.', 1)
+                name_parts = file_parts[0].split('_')
+                response_id = name_parts[0]
+                class_id = name_parts[-1] if len(name_parts) > 1 else None
+                response_files.append((response_id, class_id, full_path))
+        return response_files
+
+    def load_prompts_and_responses(data):
+        # Accepts list of (task_id, prompt_file, response_dir)
+        # Returns (task_id -> [(response_id, class_id, content_file)],
+        #          task_id -> prompt)
+        responses = dict()
+        prompts = dict()
+        for (task_id, md_file_path, response_dir) in data:
+            with open(md_file_path, 'r') as f:
+                prompts[task_id] = f.read()
+            responses[task_id] = collect_response_files(response_dir)
+        return (responses, prompts)
+
+    def pick_directory(path):
+        subdirectories = [
+            d for d in os.listdir(path) 
+            if os.path.isdir(os.path.join(path, d))
+        ]
+        if not subdirectories:
+            return None
+        else:
+            return os.path.join(path,subdirectories[0])
+
+    data = collect_response_dirs(path_query)
+    if len(data) > 0:
+        # this is a model directory
+        responses, prompts = load_prompts_and_responses(data)
+        last_dir = os.path.basename(os.path.normpath(path_query))
+        model_name, temperature = tuple(last_dir.rsplit('_', 1))
+        return DataStore(prompts=prompts,
+                         responses={(model_name, temperature): responses})
+    else:
+        # this is either a top-level directory, or a response directory
+        some_dir = pick_directory(path_query)
+        if some_dir:
+            data = collect_response_dirs(some_dir)
+            if len(data) > 0:
+                pass
+                # this is a top-level directory
+            else:
+                # we assume there should be no subdirectories in the response directory:
+                print("failed to interpret data path", file=sys.stderr)
+                exit(1)
+        else:
+            # this is a response directory
+            task_id = os.path.basename(os.path.normpath(path_query))
+            parent_dir = os.path.dirname(os.path.normpath(path_query))
+            model_temp = os.path.basename(os.path.normpath(parent_dir))
+            model_name, temperature = tuple(model_temp.rsplit('_', 1))
+            data = [(task_id, parent_dir + f"/{task_id}.md", path_query)]
+            responses, prompts = load_prompts_and_responses(data)
+            return DataStore(prompts=prompts,
+                         responses={(model_name, temperature): responses})
 
 def main():
     user_config_file = os.path.expanduser("~") + "/.llm_query.yaml"
@@ -399,6 +484,10 @@ def main():
         if arguments.code:
             settings['extractor'] = CODE_EXTRACTOR
 
+        if arguments.extract:
+            print(load_data(arguments.extract))
+            exit(1)
+
         if (settings['num_responses'] <= 1 and
             len(settings['models']) <= 1 and
             inputs[0][0] == UNNAMED_TASK and
@@ -406,7 +495,7 @@ def main():
             if settings['extractor'] == '__ID__':
                 stream_response(inputs[0][1], settings['models'][0], settings['temperature'], config)
             else:
-                response = get_response(inputs[0][1], settings['models'][0], settings['temperature'], 1, config)
+                response = get_responses(inputs[0][1], settings['models'][0], settings['temperature'], 1, config)[0]
                 answer = extract(response, inputs[0][1], settings['extractor'], UNNAMED_TASK)
                 print(answer, end="")
                 if os.isatty(sys.stdout.fileno()):
@@ -455,4 +544,3 @@ if __name__ == "__main__":
 
 # print("\nClassification Report:")
 # print(class_report)
-    
