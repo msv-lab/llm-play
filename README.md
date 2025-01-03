@@ -16,9 +16,8 @@ flowchart LR
     - Uncertainty measures
     - Semantic clusters`"]
     B --> D["`**Evaluation:**
-    - Classification Metrics
-    - Pass@K
-    - Custom Evaluators`"]
+    - Custom Evaluators
+    - Data Export`"]
 ```
 
 ## Installation
@@ -45,9 +44,9 @@ Write the response to a file (e.g., `output.md`):
 
     llm-query "What is the capital of China?" > output.md
 
-For convenience, default settings such as the model and its temperature can be set globally using the option `-s/--setup`. These settings are saved in `~/.llm_query.yaml`:
+For convenience, default settings such as the model and its temperature can be configured globally using the option `-c/--configure`. These settings are saved in `~/.llm_query.yaml`:
 
-    llm-query -s
+    llm-query -c
 
 Command-line options take precedence over the default settings.
 
@@ -55,11 +54,15 @@ Command-line options take precedence over the default settings.
 
 To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, generate 10 responses, and save the results into the directory `output`, use the command:
 
-    llm-query "What is the capital of China?" -m qwen2.5-7b-instruct qwen2.5-coder-7b-instruct -t 0.5 -n 10 -o output
+    llm-query "What is the capital of China?" \
+              --model qwen2.5-7b-instruct qwen2.5-coder-7b-instruct \
+              --temperature 0.5 \
+              -n 10 \
+              --output responses
 
 The responses will be organized as follows (`__unnamed__` is the task id, `__unnamed__.md` is the prompt, `0.md`, ..., `9.md` are responses):
 
-    output
+    responses
     ├── qwen2.5-7b-instruct_1.0
     │   ├── __unnamed__.md
     │   └── __unnamed__
@@ -75,19 +78,21 @@ The responses will be organized as follows (`__unnamed__` is the task id, `__unn
 
 To query a model with prompts contained in all files matching `*.md` in the current directory, use the command:
 
-    llm-query -i *.md -o output
+    llm-query --input *.md --output responses
 
 When a query is supplied through stdin or as a command-line argument, the task is automatically assigned the identifier `__unnamed__`. However, if the query originates from a file, the task will adopt the file's name (excluding the extension) as its identifier. In cases where multiple files are provided, ensure that their names are unique to avoid conflicts.
 
-An output directory must be explicitly provided (e.g. `-o output`) when querying multiple models/responses/input files.
+An output directory must be explicitly provided (e.g. `--output responses`) when querying multiple models/responses/input files.
 
 ## Data Extraction
 
 Extractors are shell commands used to extract specific data from responses. These commands are defined using a shell template language (described below). The special extractor `__ID__` simply returns the entire response without modification.
 
-This is to extract text within the tag `<answer> ... </answer>` from all responses in `output`, and save the results into the directory `data`:
+This is to extract text within the tag `<answer> ... </answer>` from all responses in `responses`, and save the results into the directory `data`:
 
-    llm-query -x output -o data --extractor "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_OUTPUT_FILE%%"
+    llm-query --extract responses \
+              --output data \
+              --extractor "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_OUTPUT_FILE%%"
 
 The above extractor searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
 
@@ -106,11 +111,11 @@ The extracted data is saved into "txt" files. The file extension can be specifie
 
 ### On-the-fly Extraction
 
-Data can be extracted on-the-fly while querying LLMs. Assuming that the answer extactor is selected using the interface of `-s`, the following command will print only the name of the city (i.e., `Beijing`):
+Data can be extracted on-the-fly while querying LLMs. Assuming that the answer extactor is selected using the interface of `-c`, the following command will print only the name of the city (i.e., `Beijing`):
 
     llm-query "What is the capital of China? Wrap the final answer with <answer> </answer>"
 
-There are built-in helper functions to simplify extracting answers or code when performed on-the-fly. These helpers automatically augment the prompt and apply the necessary extractors to extract the relevant parts of the response.
+There are built-in helper functions to simplify extracting answers or code when performed on-the-fly. These helpers automatically augment the prompt and apply the necessary extractors to extract the relevant parts of the response (the default extactor and equivalence options are ignored).
 
     llm-query "What is the capital of China?" --answer
     llm-query "Write a Python function f(n: int) -> int that computes the n-th Catalan number" --code
@@ -119,11 +124,15 @@ There are built-in helper functions to simplify extracting answers or code when 
 
 To group answers into equivalence classes based qwen2.5's judgement, use the following command:
 
-    llm-query -c output -o classes --equivalence "llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%OUTPUT1%%\" and \"%%OUTPUT2%%\"?' --predicate"
+    llm-query --cluster output \
+              --output classes \
+              --equivalence "llm-query --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%OUTPUT1%%\" and \"%%OUTPUT2%%\"?' --predicate"
 
 Clustering can be performed for a subset of responses:
 
-    llm-query -c output/qwen2.5-7b-instruct_1.0/a/ -o classes --equivalence "$EQUIVALENCE"
+    llm-query --cluster output/qwen2.5-7b-instruct_1.0/a/ \
+              --output classes \
+              --equivalence "$EQUIVALENCE"
     
 The equivalence class identifiers will be added to end of output file names, after the underscore:
 
@@ -140,12 +149,12 @@ This equivalence is defined via a shell command that exits with the zero status 
 
 Equivalence relations can be composed by repeated clustering:
 
-    llm-query -c output -o classes1 --equivalence "$EQUIVALENCE1"
-    llm-query -c classes1 -o classes2 --equivalence "$EQUIVALENCE2"
+    llm-query --cluster output --output classes1 --equivalence "$EQUIVALENCE1"
+    llm-query --cluster classes1 --output classes2 --equivalence "$EQUIVALENCE2"
     
 The equivalence relation can be configured:
 
-- Using the `-s` option to select a predefined equivalence command.
+- Using the `-c` option to select a predefined equivalence command.
 - Or, specifying a custom equivalence command using the `--equivalence` option.
 
 Clustering can also be performed on-the-fly while querying models if any non-trivial equivalence relations is specified. The trivial relation `__ID__` means syntactic identity and effectively disables clustering.
@@ -154,11 +163,11 @@ Clustering can also be performed on-the-fly while querying models if any non-tri
 
 To analyze the distribution of equivalence classes of responses (across one or more models and/or inputs), use the following command:
 
-    llm-query -d output/
+    llm-query --distribution output/
 
 A distribution can be computed for a subset of responses:
 
-    llm-query -d output/a.md/qwen2.5-7b-instruct_1.0
+    llm-query --distribution output/a.md/qwen2.5-7b-instruct_1.0
     
 This will compute and visualise
 
@@ -171,7 +180,7 @@ Related work on semantic uncertainty:
   Lorenz Kuhn, Yarin Gal, Sebastian Farquhar<br>
   ICLR 2023
 
-Note that `-d` does not itself perform any data extraction or clustering.
+Note that `--distribution` does not itself perform any data extraction or clustering.
 
 ### Comparing Distributions
 
@@ -194,44 +203,19 @@ The evaluation mode is enabled with the `-e` option and evaluates previously com
 
 To evaluate the responses stored in the output directory by checking if they are equal to a specific value, i.e. `Beijing`, use:
 
-    llm-query -e output --equal Beijing
+    llm-query --evaluate output --equal Beijing
 
 Evalation can be done for a subset of responses:
 
-    llm-query -e output/a.md/qwen2.5-7b-instruct_1.0 --equal Beijing
+    llm-query --evaluate output/a.md/qwen2.5-7b-instruct_1.0 --equal Beijing
     
 The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--equivalence` or the default one selected with `-s`.
 
 You can specify a custom evaluator using the `--evaluator` option. A custom evaluator is a shell command that terminates with the zero exit code if the response passes evaluation.
 
-    llm-query -e output --evaluator 'wc -w <<< %%ESCAPED_OUTPUT%% | grep -q ^1$'
+    llm-query --evaluate output --evaluator 'wc -w <<< %%ESCAPED_OUTPUT%% | grep -q ^1$'
 
 This example evaluates whether each response contains exactly one word.
-
-It will compute the following:
-- Evaluation table
-- Pass@1
-
-Related work on Pass@1:
-
-- Evaluating Large Language Models Trained on Code<br>
-  Chen et al.<br>
-  https://arxiv.org/abs/2107.03374
-
-### Classification Metrics
-
-When performing binary classification with the labels "Yes" and "No" (case-insensitive), the following command computes classification metrics:
-
-    llm-query -e output --classification ground_truth.csv
-    
-where `ground_truth.csv` contains two columns: task ids and ground truth labels.
-
-It will compute the following:
-
-- [Confusion matrix](https://en.wikipedia.org/wiki/Confusion_matrix)
-- [Precision and recall](https://en.wikipedia.org/wiki/Precision_and_recall)
-- [F-score](https://en.wikipedia.org/wiki/F-score)
-- [Matthews correlation coefficient (MCC)](https://en.wikipedia.org/wiki/Phi_coefficient)
 
 ### On-the-fly Evaluation
 
@@ -246,6 +230,18 @@ This helper option acts as a predicate over `$CITY`:
 It is equivalent to the following (plus, the command will terminate with the zero exit code iff it passes the evaluation):
 
     llm-query "Is $CITY the capital of China? Respond Yes or No." --answer --equal Yes >/dev/null
+    
+## Data export
+
+Data can be exported to a format suitable for further analysis, such as JSON or CVS using the options `--export` and `--report`.
+
+This will export responses as an CSV table (the file extension determines the format):
+
+    llm-query --export data --report data.csv
+    
+The option `--report` can be added to other formats for on-the-fly reporting, e.g.
+
+    llm-query --distribution data --report data.json
 
 ## Shell Template Language
 

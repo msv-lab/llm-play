@@ -185,19 +185,19 @@ def execute_batch_jobs(inputs, settings, output, config):
     if num_jobs > 1:
         pbar = tqdm(total=num_jobs, ascii=True)
     for im, model in enumerate(settings['models']):
-        model_path = output + "/" + model + "_" + str(settings['temperature'])
+        model_path = os.path.join(output, model + "_" + str(settings['temperature']))
         os.makedirs(model_path)
         for name, prompt in inputs:
-            with open(f"{model_path}/{name}.md", "w") as file:
+            with open(os.path.join(model_path, f"{name}.md"), "w") as file:
                 file.write(prompt)
-            task_path = model_path + "/" + name
+            task_path = os.path.join(model_path, name)
             os.makedirs(task_path)
             for i, response in enumerate(get_responses(prompt, model, settings['temperature'], settings['num_responses'], config)):
                 if settings['extractor'] != '__ID__':
                     result = extract(response, prompt, settings['extractor'], name)
                 else:
                     result = response
-                with open(f"{task_path}/{i}.md", "w") as file:
+                with open(os.path.join(task_path, f"{i}.md"), "w") as file:
                     file.write(result)
                 if num_jobs > 1:
                     pbar.update()
@@ -379,8 +379,21 @@ def load_data(path_query):
         if some_dir:
             data = collect_response_dirs(some_dir)
             if len(data) > 0:
-                pass
-                # this is a top-level directory
+                subdirectories = [
+                    d for d in os.listdir(path_query) 
+                    if os.path.isdir(os.path.join(path, d))
+                ]
+                all_responses = dict()
+                prompts = dict()
+                for model_dir in subdirectories:                    
+                    data = collect_response_dirs(os.path.join(path_query, model_dir))
+                    assert(len(data) > 0)
+                    model_name, temperature = tuple(last_dir.rsplit('_', 1))
+                    responses, prompts = load_prompts_and_responses(data)
+                    all_responses[(model_name, temperature)] = responses
+                    
+                return DataStore(prompts=prompts,
+                                 responses=all_responses)
             else:
                 # we assume there should be no subdirectories in the response directory:
                 print("failed to interpret data path", file=sys.stderr)
@@ -391,13 +404,13 @@ def load_data(path_query):
             parent_dir = os.path.dirname(os.path.normpath(path_query))
             model_temp = os.path.basename(os.path.normpath(parent_dir))
             model_name, temperature = tuple(model_temp.rsplit('_', 1))
-            data = [(task_id, parent_dir + f"/{task_id}.md", path_query)]
+            data = [(task_id, os.path.join(parent_dir, f"/{task_id}.md"), path_query)]
             responses, prompts = load_prompts_and_responses(data)
             return DataStore(prompts=prompts,
-                         responses={(model_name, temperature): responses})
+                             responses={(model_name, temperature): responses})
 
 def main():
-    user_config_file = os.path.expanduser("~") + "/.llm_query.yaml"
+    user_config_file = os.path.join(os.path.expanduser("~"), ".llm_query.yaml")
 
     if os.path.isfile(user_config_file):
         with open(user_config_file, 'r') as file:
