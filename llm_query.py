@@ -1,4 +1,4 @@
-# llm-query is a utility for small-scale experimentation with LLMs in UNIX environment.
+# llm-query is for interactively defining and executing experimental pipelines with LLMs.
 # Copyright (C) 2025 Sergey Mechtaev
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,7 +15,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 
 import shlex
 import os
@@ -26,7 +26,7 @@ import argparse
 import tempfile
 import subprocess
 import re
-from collections import defaultdict
+from collections import deque
 
 import yaml
 from tqdm import tqdm
@@ -50,7 +50,7 @@ providers:
     API: OpenAI
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     key_env_variable: DASHSCOPE_API_KEY
-    support_multiple_responses: False
+    support_multiple_responses: True
   DeepSeek:
     API: OpenAI
     base_url: https://api.deepseek.com
@@ -117,7 +117,35 @@ equivalences:
 """
 
 
-UNNAMED_TASK = '__unnamed__'
+@dataclass
+class Task:
+    id: str
+    prompt: str
+
+    @staticmethod
+    def unnamed(prompt):
+        return Task('__unnamed__', prompt)
+
+    def is_unnamed(self):
+        return self.id == '__unnamed__'
+
+
+@dataclass
+class LLMQuery:
+    models: List[str]
+    temperature: str
+    tasks: List[Task]
+    num_responses: int
+
+
+@dataclass
+class StreamItem: 
+    model: str
+    temperature: str
+    task: Task
+    response_id: int
+    class_id: int
+    content: str
 
 
 def get_provider_by_model(model, config):
@@ -127,31 +155,71 @@ def get_provider_by_model(model, config):
     raise ValueError(f"no provider for model {model}")
 
 
-def get_responses(prompt, model, temperature, n, config):
-    provider = get_provider_by_model(model, config)
-    client = OpenAI(
-        api_key=os.getenv(config['providers'][provider]['key_env_variable']),
-        base_url=config['providers'][provider]['base_url'],
-    )
-    if config['providers'][provider]['support_multiple_responses']:
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {'role': 'user', 'content': prompt}],
-            n=n
+class LLMResponseStream:
+    def __init__(self, query, config):
+        self.temperature = query.temperature
+        self.config = config
+        self.current_item_index = 0
+        self.current_response_index = 0
+        self.cache = deque()
+        self.execution_plan = deque()
+        for m in query.models:
+            for t in query.tasks:
+                self.execution_plan.append((m, t, query.num_responses))
+        self.size = len(query.models) * len(query.tasks) * query.num_responses
+
+    def __iter__(self):
+        return self
+
+    def _generate_responses(self, model, prompt, temperature, n):
+        provider = get_provider_by_model(model, self.config)
+        client = OpenAI(
+            api_key=os.getenv(self.config['providers'][provider]['key_env_variable']),
+            base_url=self.config['providers'][provider]['base_url'],
         )
-        return [c.message.content for c in completion.choices]
-    else:
-        responses = []
-        for i in range(n):
+        if self.config['providers'][provider]['support_multiple_responses']:
             completion = client.chat.completions.create(
                 model=model,
-                messages=[
-                    {'role': 'user', 'content': prompt}],
+                messages=[{'role': 'user', 'content': prompt}],
+                n=n
+            )
+            return [c.message.content for c in completion.choices]
+        else:
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[{'role': 'user', 'content': prompt}],
                 n=1
             )
-            responses.append(completion.choices[0].message.content)
-        return responses
+            return [completion.choices[0].message.content]
+
+    def __next__(self):
+        if self.current_item_index >= len(self):
+            raise StopIteration
+        self.current_item_index += 1
+        if len(self.cache) == 0:
+            model, task, n = self.execution_plan.pop()
+            responses = self._generate_responses(model, task.prompt, self.temperature, n)
+            for r in responses:
+                self.cache.append((model, task, self.current_response_index, r))
+                self.current_response_index += 1
+            if n > len(responses):
+                self.execution_plan.append((model, task, n - len(responses)))
+            else:
+                self.current_response_index = 0
+        model, task, response_id, response = self.cache.pop()
+        return StreamItem(
+            model = model,
+            temperature = self.temperature,
+            task = task,
+            response_id = response_id,
+            class_id = response_id,
+            content = response)
+
+    def next_batch(self):
+        return self.current_index > 0 and len(self.current_response_index) == 0
+
+    def __len__(self):
+        return self.size
 
 
 def stream_response(prompt, model, temperature, config):
@@ -179,33 +247,33 @@ def recreate_directory(path):
     os.makedirs(path)
 
 
-def execute_batch_jobs(inputs, settings, output, config):
+def execute_batch_jobs(query, settings, output, config):
     recreate_directory(output)
-    num_jobs = len(settings['models']) * len(inputs)
-    if num_jobs > 1:
-        pbar = tqdm(total=num_jobs, ascii=True)
-    for im, model in enumerate(settings['models']):
-        model_path = os.path.join(output, model + "_" + str(settings['temperature']))
-        os.makedirs(model_path)
-        for name, prompt in inputs:
-            with open(os.path.join(model_path, f"{name}.md"), "w") as file:
-                file.write(prompt)
-            task_path = os.path.join(model_path, name)
-            os.makedirs(task_path)
-            for i, response in enumerate(get_responses(prompt, model, settings['temperature'], settings['num_responses'], config)):
-                if settings['extractor'] != '__ID__':
-                    result = extract(response, prompt, settings['extractor'], name)
-                else:
-                    result = response
-                with open(os.path.join(task_path, f"{i}.md"), "w") as file:
-                    file.write(result)
-                if num_jobs > 1:
-                    pbar.update()
-    if num_jobs > 1:
+    stream = LLMResponseStream(query, config)
+    if len(stream) > 1:
+        pbar = tqdm(total=len(stream), ascii=True)
+    for i in stream:
+        model_path = os.path.join(output, f"{i.model}_{i.temperature}")
+        os.makedirs(model_path, exist_ok=True)
+        prompt_file = os.path.join(model_path, f"{i.task.id}.md")
+        if not os.path.exists(prompt_file):
+            with open(prompt_file, "w") as file:
+                file.write(i.task.prompt)
+        task_path = os.path.join(model_path, i.task.id)
+        os.makedirs(task_path, exist_ok=True)
+        if settings['extractor'] != '__ID__':
+            result = extract(i.content, i.task, settings['extractor'])
+        else:
+            result = i.content
+        with open(os.path.join(task_path, f"{i.response_id}.md"), "w") as file:
+            file.write(result)
+            if len(stream) > 1:
+                pbar.update()
+    if len(stream) > 1:
         pbar.close()
 
 
-def instantiate_shell_template(t, prompt, prompt_file, outputs, output_files, task):
+def instantiate_shell_template(t, task, prompt_file, outputs, output_files):
     assert(len(outputs) == len(output_files))
 
     def render(value, escape=False):
@@ -222,24 +290,24 @@ def instantiate_shell_template(t, prompt, prompt_file, outputs, output_files, ta
             t = t.replace(f"%%ESCAPED_OUTPUT{i}%%", render(outputs[i - 1], escape=True))
             t = t.replace(f"%%OUTPUT_FILE{i}%%", render(output_files[i - 1]))
             t = t.replace(f"%%ESCAPED_OUTPUT_FILE{i}%%", render(output_files[i - 1], escape=True))
-    t = t.replace(f"%%PROMPT%%", render(prompt, 0))
-    t = t.replace(f"%%ESCAPED_PROMPT%%", render(prompt, escape=True))
+    t = t.replace(f"%%PROMPT%%", render(task.prompt, 0))
+    t = t.replace(f"%%ESCAPED_PROMPT%%", render(task.prompt, escape=True))
     t = t.replace(f"%%PROMPT_FILE%%", render(prompt_file))
     t = t.replace(f"%%ESCAPED_PROMPT_FILE%%", render(prompt_file, escape=True))
-    t = t.replace(f"%%TASK_ID%%", render(task))
-    t = t.replace(f"%%ESCAPED_TASK_ID%%", render(task, escape=True))
+    t = t.replace(f"%%TASK_ID%%", render(task.id))
+    t = t.replace(f"%%ESCAPED_TASK_ID%%", render(task.id, escape=True))
 
     return t
 
 
-def extract(response, prompt, extractor, task):
+def extract(response, task, extractor):
     with tempfile.NamedTemporaryFile() as prompt_file:
         prompt_file.write(prompt.encode())
         prompt_file.flush()
         with tempfile.NamedTemporaryFile() as output_file:
             output_file.write(response.encode())
             output_file.flush()
-            cmd = instantiate_shell_template(extractor, prompt, prompt_file.name, outputs=[response], output_files=[output_file.name], task=task)
+            cmd = instantiate_shell_template(extractor, task, prompt_file.name, outputs=[response], output_files=[output_file.name])
             result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             return result.stdout
 
@@ -247,39 +315,41 @@ def extract(response, prompt, extractor, task):
 def parse_args():
     parser = argparse.ArgumentParser(description="LLM Query Interface")
     parser.add_argument("query", nargs='?', type=str, help="Query string")
-    parser.add_argument("-i", "--inputs", nargs='+', type=str, help="Input files")
-    parser.add_argument("-o", "--output", type=str, help="Output directory")
-    parser.add_argument("-m", "--models", nargs='+', type=str, help="List of models to query")
-    parser.add_argument("-t", "--temperature", type=float, help="Temperature for model generation")
+    parser.add_argument("--prompt", nargs='+', type=str, help="Prompt files")
+    parser.add_argument("--output", type=str, help="Output directory")
+    parser.add_argument("--model", nargs='+', type=str, help="List of models to query")
+    parser.add_argument("--temperature", type=float, help="Temperature for model generation")
     parser.add_argument("-n", "--num-responses", type=int, help="Number of responses to generate")
-    parser.add_argument("-x", "--extract", type=str, help="Extract data in directory")
+    parser.add_argument("--extract", type=str, help="Extract data in directory")
     parser.add_argument("--extractor", type=str, help="Answer extraction shell command")
     parser.add_argument("--extension", type=str, help="File extension for extracted data")
-    parser.add_argument("-a", "--answer", action="store_true", help="Answer question")
-    parser.add_argument("-c", "--code", action="store_true", help="Generate code")
-    parser.add_argument("-d", "--distribution", type=str, help="Compute distribution of responses in the directory")
+    parser.add_argument("--answer", action="store_true", help="Answer question")
+    parser.add_argument("--code", action="store_true", help="Generate code")
+    parser.add_argument("--distribution", type=str, help="Compute distribution of responses in the directory")
     parser.add_argument("--equivalence", type=str, help="Equivalence relation shell command")
-    parser.add_argument("-e", "--eval", type=str, help="Evaluate responses in the directory")
+    parser.add_argument("--evaluate", type=str, help="Evaluate responses in the directory")
     parser.add_argument("--equal", type=str, help="Check equivalence of responses to the specified value")
     parser.add_argument("--evalautor", type=str, help="Evaluator shell command")
-    parser.add_argument("-p", "--predicate", action="store_true", help="Evaluate truthfulness of the predicate")
-    parser.add_argument("-s", "--setup", action="store_true", help="Set default options")
+    parser.add_argument("--predicate", action="store_true", help="Evaluate truthfulness of the predicate")
+    parser.add_argument("--export", type=str, help="Export data from directory")
+    parser.add_argument("--report", type=str, help="Output CSV or JSON file")
+    parser.add_argument("-c", "--configure", action="store_true", help="Set default options")
     return parser.parse_args()
 
 
 def validate_arguments(arguments):
     if (((arguments.num_responses and arguments.num_responses > 1) or
-         (arguments.models and len(arguments.models) > 1) or
-         (arguments.inputs and len(arguments.inputs) > 1)) and
+         (arguments.model and len(arguments.model) > 1) or
+         (arguments.prompt and len(arguments.prompt) > 1)) and
         not arguments.output):
-        print("for multiple responses/models/inputs, the output directory needs to be specified", file=sys.stderr)
+        print("for multiple responses/models/prompts, the output directory needs to be specified", file=sys.stderr)
         exit(1)
 
     if sum([bool(arguments.query),
-            bool(arguments.inputs),
+            bool(arguments.prompt),
             bool(arguments.distribution),
-            bool(arguments.eval)]) > 1:
-        print("choose only one of (1) query string, (2) input files, (3) response distribution, (4) response evaluation", file=sys.stderr)
+            bool(arguments.evaluate)]) > 1:
+        print("choose only one of (1) query string, (2) prompt files, (3) response distribution, (4) response evaluation", file=sys.stderr)
         exit(1)
 
     if ((arguments.answer or arguments.code) and arguments.extractor):
@@ -291,22 +361,22 @@ def validate_arguments(arguments):
         exit(1)
 
 
-def process_input_files(file_list):
-    label_content_pairs = []
+def process_prompt_files(file_list):
+    tasks = []
     seen_labels = set()
 
     for file_path in file_list:
         base_name = os.path.basename(file_path)
         label = os.path.splitext(base_name)[0]
         if label in seen_labels:
-            print(f"duplicate input label: '{label}'", file=sys.stderr)
+            print(f"duplicate prompt label: '{label}'", file=sys.stderr)
             sys.exit(1)
         seen_labels.add(label)
         with open(file_path, 'r') as file:
             content = file.read()
-            label_content_pairs.append((label, content))
+            tasks.append(Task(label, content))
 
-    return label_content_pairs
+    return tasks
 
 
 @dataclass
@@ -391,7 +461,6 @@ def load_data(path_query):
                     model_name, temperature = tuple(last_dir.rsplit('_', 1))
                     responses, prompts = load_prompts_and_responses(data)
                     all_responses[(model_name, temperature)] = responses
-                    
                 return DataStore(prompts=prompts,
                                  responses=all_responses)
             else:
@@ -421,8 +490,8 @@ def main():
     arguments = parse_args()
     validate_arguments(arguments)
 
-    if arguments.setup:
-        t = InquirerPy.prompt([
+    if arguments.configure:
+        choice = InquirerPy.prompt([
                 {
                     "type": "list",
                     "name": "model",
@@ -439,48 +508,39 @@ def main():
                 {
                     "type": "list",
                     "name": "extractor",
-                    "message": "Extract asnwers with:",
+                    "message": "Data extractor for --extract:",
                     "choices": config['extractors'],
                     "default": config['default']['extractor']
                 },
                 {
                     "type": "list",
                     "name": "equivalence",
-                    "message": "Cluster answers with:",
+                    "message": "Relation for --cluster/--diff/--equal:",
                     "choices": config['equivalences'],
                     "default": config['default']['equivalence']
                 },
         ])
-        if t:
-            config['default'] = t
+        if choice:
+            config['default'] = choice
         with open(user_config_file, 'w') as f:
             yaml.dump(config, f, width=float("inf"))
     else:
 
         if arguments.query:
-            inputs = [(UNNAMED_TASK, arguments.query)]
-        elif (not arguments.inputs and
-              not arguments.query):
-            inputs = [(UNNAMED_TASK, sys.stdin.read())]
+            tasks = [Task.unnamed(arguments.query)]
+        elif (not arguments.prompt and not arguments.query):
+            tasks = [Task.unnamed(sys.stdin.read())]
         else:
-            inputs = process_input_files(arguments.inputs)
+            tasks = process_prompt_files(arguments.prompt)
+
+        query = LLMQuery(
+            models = arguments.model if arguments.model else [config['default']['model']],
+            temperature = str(arguments.temperature) if arguments.temperature else config['default']['temperature'],
+            num_responses = arguments.num_responses if arguments.num_responses else 1,
+            tasks = tasks,
+        )
 
         settings = dict()
-
-        if arguments.models:
-            settings['models'] = arguments.models
-        else:
-            settings['models'] = [config['default']['model']]
-
-        if arguments.temperature:
-            settings['temperature'] = str(arguments.temperature)
-        else:
-            settings['temperature'] = config['default']['temperature']
-
-        if arguments.num_responses:
-            settings['num_responses'] = arguments.num_responses
-        else:
-            settings['num_responses'] = 1
 
         if arguments.extractor:
             settings['extractor'] = arguments.extractor
@@ -489,10 +549,10 @@ def main():
 
         if arguments.answer:
             settings['extractor'] = ANSWER_EXTRACTOR
-            new_inputs = []
-            for label, prompt in inputs:
-                new_inputs.append((label, prompt + " " + ANSWER_FORMAT_DIRECTIVE))
-            inputs = new_inputs
+            new_tasks = []
+            for t in tasks:
+                new_tasks.append(Task(t.id, t.prompt + " " + ANSWER_FORMAT_DIRECTIVE))
+            tasks = new_tasks
 
         if arguments.code:
             settings['extractor'] = CODE_EXTRACTOR
@@ -501,59 +561,21 @@ def main():
             print(load_data(arguments.extract))
             exit(1)
 
-        if (settings['num_responses'] <= 1 and
-            len(settings['models']) <= 1 and
-            inputs[0][0] == UNNAMED_TASK and
+        if (query.num_responses <= 1 and
+            len(query.models) <= 1 and
+            tasks[0].is_unnamed() and
             not arguments.output):
             if settings['extractor'] == '__ID__':
-                stream_response(inputs[0][1], settings['models'][0], settings['temperature'], config)
+                stream_response(tasks[0].prompt, query.models[0], query.temperature, config)
             else:
-                response = get_responses(inputs[0][1], settings['models'][0], settings['temperature'], 1, config)[0]
-                answer = extract(response, inputs[0][1], settings['extractor'], UNNAMED_TASK)
+                i = next(LLMResponseStream(query, config))
+                answer = extract(i.content, i.task, settings['extractor'])
                 print(answer, end="")
                 if os.isatty(sys.stdout.fileno()):
                     print()
         else:
-            execute_batch_jobs(inputs, settings, arguments.output, config)
+            execute_batch_jobs(query, settings, arguments.output, config)
 
 
 if __name__ == "__main__":
     main()
-
-
-# import pandas as pd
-# from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
-
-# # Load the true labels and predicted labels from the CSV files
-# ground_truth_file = "ground_truth.csv"  # Path to the ground truth file
-# predictions_file = "predictions.csv"  # Path to the predictions file
-
-# # Read the CSV files
-# ground_truth = pd.read_csv(ground_truth_file)
-# predictions = pd.read_csv(predictions_file)
-
-# # Ensure the column names match the actual structure of your CSV files
-# true_labels = ground_truth['true_label']
-# predicted_labels = predictions['predicted_label']
-
-# # Compute classification metrics
-# accuracy = accuracy_score(true_labels, predicted_labels)
-# precision = precision_score(true_labels, predicted_labels, average='weighted')  # Use 'weighted' for multiclass
-# recall = recall_score(true_labels, predicted_labels, average='weighted')
-# f1 = f1_score(true_labels, predicted_labels, average='weighted')
-# conf_matrix = confusion_matrix(true_labels, predicted_labels)
-
-# # Generate a comprehensive classification report
-# class_report = classification_report(true_labels, predicted_labels)
-
-# # Print the results
-# print("Classification Metrics:")
-# print(f"Accuracy: {accuracy:.2f}")
-# print(f"Precision: {precision:.2f}")
-# print(f"Recall: {recall:.2f}")
-# print(f"F1 Score: {f1:.2f}")
-# print("\nConfusion Matrix:")
-# print(conf_matrix)
-
-# print("\nClassification Report:")
-# print(class_report)

@@ -1,6 +1,6 @@
 # llm-query
 
-A utility for experimenting with LLMs for UNIX hackers. It supports the following workflow:
+A utility for interactively defining and executing experimental pipelines with LLMs.
 
 ```mermaid
 flowchart LR
@@ -17,7 +17,7 @@ flowchart LR
     - Semantic clusters`"]
     B --> D["`**Evaluation:**
     - Custom Evaluators
-    - Data Export`"]
+    - CSV/JSON Export`"]
 ```
 
 ## Installation
@@ -39,6 +39,10 @@ Run the following command to ask a question directly:
 You can input a query stored in a file, such as `prompt.md`:
 
     llm-query < prompt.md
+    
+or
+
+    llm-query --prompt prompt.md
 
 Write the response to a file (e.g., `output.md`):
 
@@ -78,15 +82,15 @@ The responses will be organized as follows (`__unnamed__` is the task id, `__unn
 
 To query a model with prompts contained in all files matching `*.md` in the current directory, use the command:
 
-    llm-query --input *.md --output responses
+    llm-query --prompt *.md --output responses
 
 When a query is supplied through stdin or as a command-line argument, the task is automatically assigned the identifier `__unnamed__`. However, if the query originates from a file, the task will adopt the file's name (excluding the extension) as its identifier. In cases where multiple files are provided, ensure that their names are unique to avoid conflicts.
 
-An output directory must be explicitly provided (e.g. `--output responses`) when querying multiple models/responses/input files.
+An output directory must be explicitly provided (e.g. `--output responses`) when querying multiple models/responses/prompt files.
 
 ## Data Extraction
 
-Extractors are shell commands used to extract specific data from responses. These commands are defined using a shell template language (described below). The special extractor `__ID__` simply returns the entire response without modification.
+Extractors are shell commands to extract required pieces of data from responses. These commands are defined using a shell template language (described below). The special extractor `__ID__` simply returns the entire response without modification.
 
 This is to extract text within the tag `<answer> ... </answer>` from all responses in `responses`, and save the results into the directory `data`:
 
@@ -111,9 +115,10 @@ The extracted data is saved into "txt" files. The file extension can be specifie
 
 ### On-the-fly Extraction
 
-Data can be extracted on-the-fly while querying LLMs. Assuming that the answer extactor is selected using the interface of `-c`, the following command will print only the name of the city (i.e., `Beijing`):
+Data can be extracted on-the-fly while querying LLMs if `--extractor` is explicitly provided:
 
-    llm-query "What is the capital of China? Wrap the final answer with <answer> </answer>"
+    llm-query "What is the capital of China? Wrap the final answer with <answer> </answer>" \\
+              --extractor "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_OUTPUT_FILE%%"
 
 There are built-in helper functions to simplify extracting answers or code when performed on-the-fly. These helpers automatically augment the prompt and apply the necessary extractors to extract the relevant parts of the response (the default extactor and equivalence options are ignored).
 
@@ -136,7 +141,7 @@ Clustering can be performed for a subset of responses:
     
 The equivalence class identifiers will be added to end of output file names, after the underscore:
 
-    classes
+    clusters
     └── qwen2.5-7b-instruct_1.0
         ├── __unnamed__.md
         └── __unnamed__
@@ -157,11 +162,11 @@ The equivalence relation can be configured:
 - Using the `-c` option to select a predefined equivalence command.
 - Or, specifying a custom equivalence command using the `--equivalence` option.
 
-Clustering can also be performed on-the-fly while querying models if any non-trivial equivalence relations is specified. The trivial relation `__ID__` means syntactic identity and effectively disables clustering.
+Clustering can also be performed on-the-fly while querying models if any non-trivial equivalence relations is specified explicitly with `--equivalence`. The trivial relation `__ID__` means syntactic identity and effectively disables clustering.
 
 ## Response Analysis
 
-To analyze the distribution of equivalence classes of responses (across one or more models and/or inputs), use the following command:
+To analyze the distribution of equivalence classes of responses (across one or more models and/or prompts), use the following command:
 
     llm-query --distribution output/
 
@@ -199,7 +204,7 @@ This will compute and visualise:
 
 ## Evaluation
 
-The evaluation mode is enabled with the `-e` option and evaluates previously computed responses against specified criteria.
+The evaluation mode is enabled with the `--evaluate` option and evaluates previously computed responses against specified criteria.
 
 To evaluate the responses stored in the output directory by checking if they are equal to a specific value, i.e. `Beijing`, use:
 
@@ -209,7 +214,7 @@ Evalation can be done for a subset of responses:
 
     llm-query --evaluate output/a.md/qwen2.5-7b-instruct_1.0 --equal Beijing
     
-The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--equivalence` or the default one selected with `-s`.
+The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--equivalence` or the default one selected with `-c`.
 
 You can specify a custom evaluator using the `--evaluator` option. A custom evaluator is a shell command that terminates with the zero exit code if the response passes evaluation.
 
@@ -229,7 +234,11 @@ This helper option acts as a predicate over `$CITY`:
 
 It is equivalent to the following (plus, the command will terminate with the zero exit code iff it passes the evaluation):
 
-    llm-query "Is $CITY the capital of China? Respond Yes or No." --answer --equal Yes >/dev/null
+    llm-query "Is $CITY the capital of China? Respond Yes or No." \
+              --answer \
+              --equal Yes \
+              --equivalence __TRIMMED_CASE_INSENSITIVE__ \
+              >/dev/null
     
 ## Data export
 
