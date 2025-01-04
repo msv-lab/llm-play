@@ -4,10 +4,10 @@ A tool that queries LLMs and executes experimental pipelines.
 
 ```mermaid
 flowchart LR
-    A["`**Response Generation:**
+    A["`**Prompting LLMs:**
     - Multiple models
-    - Multiple tasks
-    - Multiple responses`"] --> B["`**Data Extraction:**
+    - Multiple prompts
+    - Multiple samples`"] --> B["`**Data Extraction:**
     - Answer extraction
     - Code extraction
     - Custom extractors`"]
@@ -16,8 +16,8 @@ flowchart LR
     - Uncertainty measures
     - Semantic clusters`"]
     B --> D["`**Evaluation:**
-    - Custom Evaluators
-    - CSV/JSON Export`"]
+    - Custom evaluators
+    - CSV/JSON export`"]
 ```
 
 ## Installation
@@ -56,17 +56,17 @@ Command-line options take precedence over the default settings.
 
 ## Batch Processing
 
-To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, generate 10 responses, and save the results into the directory `output`, use the command:
+To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, sample 10 responses, and save the results into the directory `samples`, use the command:
 
     llm-play "What is the capital of China?" \
-              --model qwen2.5-7b-instruct qwen2.5-coder-7b-instruct \
-              --temperature 0.5 \
-              -n 10 \
-              --output responses
+             --model qwen2.5-7b-instruct qwen2.5-coder-7b-instruct \
+             --temperature 0.5 \
+             -n 10 \
+             --output samples
 
-The responses will be organized as follows (`__unnamed__` is the task id, `__unnamed__.md` is the prompt, `0.md`, ..., `9.md` are responses):
+The samples will be organized as follows (`__unnamed__` is the prompt id, `__unnamed__.md` contains the prompt, `0.md`, ..., `9.md` are the samples):
 
-    responses
+    samples
     ├── qwen2.5-7b-instruct_1.0
     │   ├── __unnamed__.md
     │   └── __unnamed__
@@ -82,29 +82,27 @@ The responses will be organized as follows (`__unnamed__` is the task id, `__unn
 
 To query a model with prompts contained in all files matching `*.md` in the current directory, use the command:
 
-    llm-play --prompt *.md --output responses
+    llm-play --prompt *.md --output samples
 
-When a query is supplied through stdin or as a command-line argument, the task is automatically assigned the identifier `__unnamed__`. However, if the query originates from a file, the task will adopt the file's name (excluding the extension) as its identifier. In cases where multiple files are provided, ensure that their names are unique to avoid conflicts.
-
-An output directory must be explicitly provided (e.g. `--output responses`) when querying multiple models/responses/prompt files.
+When a query is supplied through stdin or as a command-line argument, the prompt is automatically assigned the identifier `__unnamed__`. However, if the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its identifier. In cases where multiple files are provided, ensure that their names are unique to avoid conflicts.
 
 ## Data Extraction
 
-Extractors are shell commands to extract required pieces of data from responses. These commands are defined using a shell template language (described below). The special extractor `__ID__` simply returns the entire response without modification.
+Extractors are shell commands used to extract relevant information from string data, such as generated samples or from data extracted in earlier stages. These commands are defined using a shell template language (described below). The special extractor `__ID__` simply returns the entire string without modification.
 
-This is to extract text within the tag `<answer> ... </answer>` from all responses in `responses`, and save the results into the directory `data`:
+This is to extract text within the tag `<answer> ... </answer>` from all samples in `samples`, and save the results into the directory `extracted`:
 
-    llm-play --extract responses \
-              --output data \
-              --extractor "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_OUTPUT_FILE%%"
+    llm-play --extract samples \
+             --output extracted \
+             --extractor "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
 
 The above extractor searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
 
-A response is treated as not containing any answer iff these two condition hold: (1) the extractor terminates with a non-zero exit code, and (2) its stdout is empty. In this case, the response is ignored.
+A datum is treated as not containing any relevant information iff these two condition hold: (1) the extractor terminates with a non-zero exit code, and (2) its stdout is empty. In this case, the datum is ignored.
 
-The extracted data is saved into "txt" files. The file extension can be specified using the `--extension` options, e.g. `--extension py` resulting in:
+By default, the extracted data is saved into "txt" files. The file extension can be specified using the `--extension` options, e.g. `--extension py` resulting in:
 
-    data
+    extracted
     └── qwen2.5-7b-instruct_1.0
         ├── __unnamed__.md
         └── __unnamed__
@@ -117,10 +115,10 @@ The extracted data is saved into "txt" files. The file extension can be specifie
 
 Data can be extracted on-the-fly while querying LLMs if `--extractor` is explicitly provided:
 
-    llm-play "What is the capital of China? Wrap the final answer with <answer> </answer>" \\
-              --extractor "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_OUTPUT_FILE%%"
+    llm-play "What is the capital of China? Wrap the final answer with <answer> </answer>" \
+             --extractor "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
 
-There are built-in helper functions to simplify extracting answers or code when performed on-the-fly. These helpers automatically augment the prompt and apply the necessary extractors to extract the relevant parts of the response (the default extactor and equivalence options are ignored).
+There are built-in helper functions to simplify extracting answers or code when performed on-the-fly. These helpers automatically augment the prompt and apply the necessary extractors to extract the relevant parts of the sample (the default extactor and equivalence options are ignored).
 
     llm-play "What is the capital of China?" --answer
     llm-play "Write a Python function f(n: int) -> int that computes the n-th Catalan number" --code
@@ -129,15 +127,15 @@ There are built-in helper functions to simplify extracting answers or code when 
 
 To group answers into equivalence classes based qwen2.5's judgement, use the following command:
 
-    llm-play --cluster output \
-              --output classes \
-              --equivalence "llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%OUTPUT1%%\" and \"%%OUTPUT2%%\"?' --predicate"
+    llm-play --cluster data \
+             --output clusters \
+             --equivalence "llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%DATA1%%\" and \"%%DATA2%%\"?' --predicate"
 
-Clustering can be performed for a subset of responses:
+Clustering can be performed for a subset of data:
 
-    llm-play --cluster output/qwen2.5-7b-instruct_1.0/a/ \
-              --output classes \
-              --equivalence "$EQUIVALENCE"
+    llm-play --cluster data/qwen2.5-7b-instruct_1.0/a/ \
+             --output clsuters \
+             --equivalence "$EQUIVALENCE"
     
 The equivalence class identifiers will be added to end of output file names, after the underscore:
 
@@ -154,8 +152,8 @@ This equivalence is defined via a shell command that exits with the zero status 
 
 Equivalence relations can be composed by repeated clustering:
 
-    llm-play --cluster output --output classes1 --equivalence "$EQUIVALENCE1"
-    llm-play --cluster classes1 --output classes2 --equivalence "$EQUIVALENCE2"
+    llm-play --cluster data --output clusters1 --equivalence "$EQUIVALENCE1"
+    llm-play --cluster clusters1 --output clusters2 --equivalence "$EQUIVALENCE2"
     
 The equivalence relation can be configured:
 
@@ -164,15 +162,15 @@ The equivalence relation can be configured:
 
 Clustering can also be performed on-the-fly while querying models if any non-trivial equivalence relations is specified explicitly with `--equivalence`. The trivial relation `__ID__` means syntactic identity and effectively disables clustering.
 
-## Response Analysis
+## Data Analysis
 
-To analyze the distribution of equivalence classes of responses (across one or more models and/or prompts), use the following command:
+To show the distribution of equivalence classes of outputs (across one or more models and/or prompts), use the following command:
 
-    llm-play --distribution output/
+    llm-play --distribution data
 
-A distribution can be computed for a subset of responses:
+A distribution can be analyzed for a subset of outputs:
 
-    llm-play --distribution output/a.md/qwen2.5-7b-instruct_1.0
+    llm-play --distribution data/a.md/qwen2.5-7b-instruct_1.0
     
 This will compute and visualise
 
@@ -191,11 +189,9 @@ Note that `--distribution` does not itself perform any data extraction or cluste
 
 To analyse difference between distributions of clusters, e.g. for different model temperatures, use the following command:
 
-    llm-play --diff output/qwen2.5-7b-instruct_1.0/a output/qwen2.5-7b-instruct_0.5/a
+    llm-play --diff data/qwen2.5-7b-instruct_1.0/a data/qwen2.5-7b-instruct_0.5/a
     
-The difference is analysed wrt to semantic clusters, thus when using `--diff` on claustered data, the appropriate equivalence relation has to be specified.
-
-This will compute and visualise:
+This command aligns the cluster labels between these two distributions w.r.t. the specified equivalence relation, as well as computes some useful statistics:
 
 - [Wasserstein metric](https://en.wikipedia.org/wiki/Wasserstein_metric)
 - [Permutation test](https://en.wikipedia.org/wiki/Permutation_test) based on the Wasserstein metric
@@ -204,27 +200,27 @@ This will compute and visualise:
 
 ## Evaluation
 
-The evaluation mode is enabled with the `--evaluate` option and evaluates previously computed responses against specified criteria.
+The evaluation mode is enabled with the `--evaluate` option and evaluates previously computed outputs against specified criteria.
 
-To evaluate the responses stored in the output directory by checking if they are equal to a specific value, i.e. `Beijing`, use:
+To evaluate data by checking if each datum is equal to a specific value, i.e. `Beijing`, use:
 
-    llm-play --evaluate output --equal Beijing
+    llm-play --evaluate data --equal Beijing
 
-Evalation can be done for a subset of responses:
+Evalation can be done for a subset of outputs:
 
-    llm-play --evaluate output/a.md/qwen2.5-7b-instruct_1.0 --equal Beijing
+    llm-play --evaluate data/qwen2.5-7b-instruct_1.0/a --equal Beijing
     
 The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--equivalence` or the default one selected with `-c`.
 
-You can specify a custom evaluator using the `--evaluator` option. A custom evaluator is a shell command that terminates with the zero exit code if the response passes evaluation.
+You can specify a custom evaluator using the `--evaluator` option. A custom evaluator is a shell command that terminates with the zero exit code if the datum passes evaluation.
 
-    llm-play --evaluate output --evaluator 'wc -w <<< %%ESCAPED_OUTPUT%% | grep -q ^1$'
+    llm-play --evaluate data --evaluator 'wc -w <<< %%ESCAPED_DATA%% | grep -q ^1$'
 
-This example evaluates whether each response contains exactly one word.
+This example evaluates whether each datum contains exactly one word.
 
 ### On-the-fly Evaluation
 
-When a single response is queried from an single model, it can be evaluated on-the-fly.
+When a single sample is generated from an single model, it can be evaluated on-the-fly.
 
     llm-play "What is the capital of China?" --answer --equal Beijing
     
@@ -240,17 +236,17 @@ It is equivalent to the following (plus, the command will terminate with the zer
               --equivalence __TRIMMED_CASE_INSENSITIVE__ \
               >/dev/null
     
-## Data export
+## Data Export
 
 Data can be exported to a format suitable for further analysis, such as JSON or CVS using the options `--export` and `--report`.
 
-This will export responses as an CSV table (the file extension determines the format):
+This will export data as an CSV table (the file extension determines the format):
 
     llm-play --export data --report data.csv
     
 The option `--report` can be added to other formats for on-the-fly reporting, e.g.
 
-    llm-play --distribution data --report data.json
+    llm-play --distribution data --report distribution.json
 
 ## Shell Template Language
 
@@ -258,15 +254,15 @@ The shell template language allows dynamic substitution of specific placeholders
 
 Available placeholders:
 
-- `%%OUTPUT%%` - replaced with the raw output (response or extracted data).
-- `%%OUTPUT_FILE%%` - replaced with a path to a temporary file containing the output.
+- `%%DATA%%` - replaced with the raw output (sample or extracted information).
+- `%%DATA_FILE%%` - replaced with a path to a temporary file containing the output.
 - `%%PROMPT%%` - replaced with the raw input prompt.
 - `%%PROMPT_FILE%%` - replaced with a path to a temporary file containing the input prompt.
-- `%%TASK_ID%%` - replaced with the task id.
+- `%%PROMPT_ID%%` - replaced with the prompt id.
 
-For commands that require multiple outputs, indexed placeholders are provided, e.g. `%%OUTPUT1%%`, `%%OUTPUT2%%`.
+For commands that require multiple outputs, indexed placeholders are provided, e.g. `%%DATA1%%`, `%%DATA2%%`.
 
-Variants of shell-escaped placeholders are available for safety when handling special characters, e.g. `%%ESCAPED_OUTPUT%%`.
+Variants of shell-escaped placeholders are available for safety when handling special characters, e.g. `%%ESCAPED_DATA%%`.
 
 ## Troubleshooting
 
