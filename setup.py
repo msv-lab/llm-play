@@ -1,10 +1,10 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="llm-query",
+    name="llm-play",
     version="1.0.0",
     packages=find_packages(),
-    py_modules=["llm_query"],
+    py_modules=["llm_play"],
     install_requires=[
         'pyyaml',
         'anthropic',
@@ -14,7 +14,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'llm-query=llm_query:main',
+            'llm-play=llm_play:main',
         ],
     },
 )

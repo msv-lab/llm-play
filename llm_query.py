@@ -1,4 +1,4 @@
-# llm-query is for interactively defining and executing experimental pipelines with LLMs.
+# llm-play is a tool that queries LLMs and executes experimental pipelines.
 # Copyright (C) 2025 Sergey Mechtaev
 #
 # This program is free software: you can redistribute it and/or modify
@@ -113,7 +113,7 @@ equivalences:
   - __ID__
   - __TRIMMED_CASE_INSENSITIVE__
   - |-
-    llm-query -m qwen2.5-72b-instruct 'Are these two answers equivalent: "%%OUTPUT1%%" and "%%OUTPUT2%%"?' --predicate
+    llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: "%%OUTPUT1%%" and "%%OUTPUT2%%"?' --predicate
 """
 
 
@@ -313,7 +313,7 @@ def extract(response, task, extractor):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="LLM Query Interface")
+    parser = argparse.ArgumentParser(description="llm-play interface")
     parser.add_argument("query", nargs='?', type=str, help="Query string")
     parser.add_argument("--prompt", nargs='+', type=str, help="Prompt files")
     parser.add_argument("--output", type=str, help="Output directory")

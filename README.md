@@ -1,6 +1,6 @@
-# llm-query
+# llm-play
 
-A utility for interactively defining and executing experimental pipelines with LLMs.
+A tool that queries LLMs and executes experimental pipelines.
 
 ```mermaid
 flowchart LR
@@ -34,23 +34,23 @@ Install the tool by running the command `python -m pip install .`
 
 Run the following command to ask a question directly:
 
-    llm-query "What is the capital of China?"
+    llm-play "What is the capital of China?"
 
 You can input a query stored in a file, such as `prompt.md`:
 
-    llm-query < prompt.md
+    llm-play < prompt.md
     
 or
 
-    llm-query --prompt prompt.md
+    llm-play --prompt prompt.md
 
 Write the response to a file (e.g., `output.md`):
 
-    llm-query "What is the capital of China?" > output.md
+    llm-play "What is the capital of China?" > output.md
 
-For convenience, default settings such as the model and its temperature can be configured globally using the option `-c/--configure`. These settings are saved in `~/.llm_query.yaml`:
+For convenience, default settings such as the model and its temperature can be configured globally using the option `-c/--configure`. These settings are saved in `~/.llm_play.yaml`:
 
-    llm-query -c
+    llm-play -c
 
 Command-line options take precedence over the default settings.
 
@@ -58,7 +58,7 @@ Command-line options take precedence over the default settings.
 
 To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, generate 10 responses, and save the results into the directory `output`, use the command:
 
-    llm-query "What is the capital of China?" \
+    llm-play "What is the capital of China?" \
               --model qwen2.5-7b-instruct qwen2.5-coder-7b-instruct \
               --temperature 0.5 \
               -n 10 \
@@ -82,7 +82,7 @@ The responses will be organized as follows (`__unnamed__` is the task id, `__unn
 
 To query a model with prompts contained in all files matching `*.md` in the current directory, use the command:
 
-    llm-query --prompt *.md --output responses
+    llm-play --prompt *.md --output responses
 
 When a query is supplied through stdin or as a command-line argument, the task is automatically assigned the identifier `__unnamed__`. However, if the query originates from a file, the task will adopt the file's name (excluding the extension) as its identifier. In cases where multiple files are provided, ensure that their names are unique to avoid conflicts.
 
@@ -94,7 +94,7 @@ Extractors are shell commands to extract required pieces of data from responses.
 
 This is to extract text within the tag `<answer> ... </answer>` from all responses in `responses`, and save the results into the directory `data`:
 
-    llm-query --extract responses \
+    llm-play --extract responses \
               --output data \
               --extractor "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_OUTPUT_FILE%%"
 
@@ -117,25 +117,25 @@ The extracted data is saved into "txt" files. The file extension can be specifie
 
 Data can be extracted on-the-fly while querying LLMs if `--extractor` is explicitly provided:
 
-    llm-query "What is the capital of China? Wrap the final answer with <answer> </answer>" \\
+    llm-play "What is the capital of China? Wrap the final answer with <answer> </answer>" \\
               --extractor "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_OUTPUT_FILE%%"
 
 There are built-in helper functions to simplify extracting answers or code when performed on-the-fly. These helpers automatically augment the prompt and apply the necessary extractors to extract the relevant parts of the response (the default extactor and equivalence options are ignored).
 
-    llm-query "What is the capital of China?" --answer
-    llm-query "Write a Python function f(n: int) -> int that computes the n-th Catalan number" --code
+    llm-play "What is the capital of China?" --answer
+    llm-play "Write a Python function f(n: int) -> int that computes the n-th Catalan number" --code
     
 ## Clustering
 
 To group answers into equivalence classes based qwen2.5's judgement, use the following command:
 
-    llm-query --cluster output \
+    llm-play --cluster output \
               --output classes \
-              --equivalence "llm-query --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%OUTPUT1%%\" and \"%%OUTPUT2%%\"?' --predicate"
+              --equivalence "llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%OUTPUT1%%\" and \"%%OUTPUT2%%\"?' --predicate"
 
 Clustering can be performed for a subset of responses:
 
-    llm-query --cluster output/qwen2.5-7b-instruct_1.0/a/ \
+    llm-play --cluster output/qwen2.5-7b-instruct_1.0/a/ \
               --output classes \
               --equivalence "$EQUIVALENCE"
     
@@ -154,8 +154,8 @@ This equivalence is defined via a shell command that exits with the zero status 
 
 Equivalence relations can be composed by repeated clustering:
 
-    llm-query --cluster output --output classes1 --equivalence "$EQUIVALENCE1"
-    llm-query --cluster classes1 --output classes2 --equivalence "$EQUIVALENCE2"
+    llm-play --cluster output --output classes1 --equivalence "$EQUIVALENCE1"
+    llm-play --cluster classes1 --output classes2 --equivalence "$EQUIVALENCE2"
     
 The equivalence relation can be configured:
 
@@ -168,11 +168,11 @@ Clustering can also be performed on-the-fly while querying models if any non-tri
 
 To analyze the distribution of equivalence classes of responses (across one or more models and/or prompts), use the following command:
 
-    llm-query --distribution output/
+    llm-play --distribution output/
 
 A distribution can be computed for a subset of responses:
 
-    llm-query --distribution output/a.md/qwen2.5-7b-instruct_1.0
+    llm-play --distribution output/a.md/qwen2.5-7b-instruct_1.0
     
 This will compute and visualise
 
@@ -191,7 +191,7 @@ Note that `--distribution` does not itself perform any data extraction or cluste
 
 To analyse difference between distributions of clusters, e.g. for different model temperatures, use the following command:
 
-    llm-query --diff output/qwen2.5-7b-instruct_1.0/a output/qwen2.5-7b-instruct_0.5/a
+    llm-play --diff output/qwen2.5-7b-instruct_1.0/a output/qwen2.5-7b-instruct_0.5/a
     
 The difference is analysed wrt to semantic clusters, thus when using `--diff` on claustered data, the appropriate equivalence relation has to be specified.
 
@@ -208,17 +208,17 @@ The evaluation mode is enabled with the `--evaluate` option and evaluates previo
 
 To evaluate the responses stored in the output directory by checking if they are equal to a specific value, i.e. `Beijing`, use:
 
-    llm-query --evaluate output --equal Beijing
+    llm-play --evaluate output --equal Beijing
 
 Evalation can be done for a subset of responses:
 
-    llm-query --evaluate output/a.md/qwen2.5-7b-instruct_1.0 --equal Beijing
+    llm-play --evaluate output/a.md/qwen2.5-7b-instruct_1.0 --equal Beijing
     
 The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--equivalence` or the default one selected with `-c`.
 
 You can specify a custom evaluator using the `--evaluator` option. A custom evaluator is a shell command that terminates with the zero exit code if the response passes evaluation.
 
-    llm-query --evaluate output --evaluator 'wc -w <<< %%ESCAPED_OUTPUT%% | grep -q ^1$'
+    llm-play --evaluate output --evaluator 'wc -w <<< %%ESCAPED_OUTPUT%% | grep -q ^1$'
 
 This example evaluates whether each response contains exactly one word.
 
@@ -226,15 +226,15 @@ This example evaluates whether each response contains exactly one word.
 
 When a single response is queried from an single model, it can be evaluated on-the-fly.
 
-    llm-query "What is the capital of China?" --answer --equal Beijing
+    llm-play "What is the capital of China?" --answer --equal Beijing
     
 This helper option acts as a predicate over `$CITY`:
 
-    llm-query "Is $CITY the capital of China?" --predicate
+    llm-play "Is $CITY the capital of China?" --predicate
 
 It is equivalent to the following (plus, the command will terminate with the zero exit code iff it passes the evaluation):
 
-    llm-query "Is $CITY the capital of China? Respond Yes or No." \
+    llm-play "Is $CITY the capital of China? Respond Yes or No." \
               --answer \
               --equal Yes \
               --equivalence __TRIMMED_CASE_INSENSITIVE__ \
@@ -246,11 +246,11 @@ Data can be exported to a format suitable for further analysis, such as JSON or 
 
 This will export responses as an CSV table (the file extension determines the format):
 
-    llm-query --export data --report data.csv
+    llm-play --export data --report data.csv
     
 The option `--report` can be added to other formats for on-the-fly reporting, e.g.
 
-    llm-query --distribution data --report data.json
+    llm-play --distribution data --report data.json
 
 ## Shell Template Language
 
