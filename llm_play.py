@@ -479,7 +479,7 @@ def load_data(path_query):
                              responses={(model_name, temperature): responses})
 
 def main():
-    user_config_file = os.path.join(os.path.expanduser("~"), ".llm_query.yaml")
+    user_config_file = os.path.join(os.path.expanduser("~"), ".llm_play.yaml")
 
     if os.path.isfile(user_config_file):
         with open(user_config_file, 'r') as file:
