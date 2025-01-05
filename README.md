@@ -94,7 +94,7 @@ When a query is supplied through stdin or as a command-line argument, the prompt
 
 ## Data Transformation
 
-Data transformation can be used, for example, to extract relevant information from data, e.g. from the generated samples or from data extracted in earlier stages. Transformation is performed by shell commands defined using a shell template language (described below). The special transformer `__ID__` simply returns the entire string without modification.
+Data transformation can be used, for example, to extract relevant information from the generated samples or from data extracted in earlier stages. Transformation is performed by shell commands defined using a shell template language (described below). The special transformer `__ID__` simply returns the entire string without modification.
 
 This is to extract text within the tag `<answer> ... </answer>` from all samples in `samples`, and save the results into the directory `extracted`:
 
@@ -145,10 +145,10 @@ To group answers into equivalence classes based qwen2.5's judgement, use the fol
 Clustering can be performed for a subset of data:
 
     llm-play --cluster data/qwen2.5-7b-instruct_1.0/a/ \
-             --output clsuters \
+             --output clusters \
              --equivalence "$EQUIVALENCE"
     
-When using the filesystem tree format, the equivalence class identifiers will be added to end of output file names, after the underscore:
+When using the filesystem tree format, the equivalence class identifiers will be added to the end of output file names, after the underscore:
 
     clusters
     └── qwen2.5-7b-instruct_1.0
@@ -231,7 +231,7 @@ Evalation can be done for a subset of outputs:
     
 ### Predicates
 
-Predicates are one-the-fly query evalautors. For example, this command acts as a predicate over `$CITY`:
+Predicates are one-the-fly query evaluators. For example, this command acts as a predicate over `$CITY`:
 
     llm-play "Is $CITY the capital of China?" --predicate
 
@@ -243,18 +243,6 @@ It is equivalent to the following (plus, the command will terminate with the zer
               --equivalence __TRIMMED_CASE_INSENSITIVE__ \
               >/dev/null
     
-## Data Export
-
-Data can be exported to a format suitable for further analysis, such as JSON or CVS using the options `--export` and `--report`.
-
-This will export data as an CSV table (the file extension determines the format):
-
-    llm-play --export data --report data.csv
-    
-The option `--report` can be added to other formats for on-the-fly reporting, e.g.
-
-    llm-play --distribution data --report distribution.json
-
 ## Shell Template Language
 
 The shell template language allows dynamic substitution of specific placeholders with runtime values before executing a shell command. These placeholders are instantiated and replaced with their corresponding values before the command is executed by the system shell.
