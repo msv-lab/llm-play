@@ -32,6 +32,7 @@ import yaml
 import InquirerPy
 from openai import OpenAI
 
+VERSION = "0.0.0"
 
 ANSWER_FORMAT_DIRECTIVE = "Wrap the final answer with <answer> </answer>."
 ANSWER_EXTRACTOR = r"sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
@@ -43,7 +44,7 @@ default:
   models:
     - qwen2.5-72b-instruct
   temperature: 1.0
-  extractor: __ID__
+  function: __ID__
   equivalence: __ID__
 providers:
   Aliyun:
@@ -103,7 +104,7 @@ models:
   -
     name: claude-3-5-sonnet-20241022
     provider: CloseAI_Anthropic
-extractors:
+functions:
   - __ID__
   - |-
     {ANSWER_EXTRACTOR}
@@ -265,7 +266,7 @@ def stream_response_to_stdout(prompt, model, temperature, config):
 
 
 class JSONStream:
-    ```
+    """
     {
         "prompts":
         "model_id": {
@@ -275,16 +276,16 @@ class JSONStream:
         },
         ...
     }
-    ```
+    """
     def __init__(self, data):
         self.current_item_index = 0
         self.current_sample_index = 0
 
-        self.size = 
+        self.size = 0
 
         max_model_name_len = max(len(m) for m in query.models)
         max_task_name_len = max(len(t.id) for t in query.tasks)
-        self.table_format = 
+        self.table_format = 0
 
     def __iter__(self):
         return self
@@ -354,8 +355,8 @@ def execute_batch_jobs(query, settings, output, config):
                 file.write(i.task.prompt)
         task_path = os.path.join(model_path, i.task.id)
         os.makedirs(task_path, exist_ok=True)
-        if settings['extractor'] != '__ID__':
-            result = extract(i.content, i.task, settings['extractor'])
+        if settings['function'] != '__ID__':
+            result = transform(i.content, i.task, settings['function'])
         else:
             result = i.content
         with open(os.path.join(task_path, f"{i.sample_id}.md"), "w") as file:
@@ -392,14 +393,14 @@ def instantiate_shell_template(t, task, prompt_file, data, data_files):
     return t
 
 
-def extract(sample, task, extractor):
+def transform(sample, task, function):
     with tempfile.NamedTemporaryFile() as prompt_file:
         prompt_file.write(task.prompt.encode())
         prompt_file.flush()
         with tempfile.NamedTemporaryFile() as data_file:
             data_file.write(sample.encode())
             data_file.flush()
-            cmd = instantiate_shell_template(extractor, task, prompt_file.name, data=[sample], data_files=[data_file.name])
+            cmd = instantiate_shell_template(function, task, prompt_file.name, data=[sample], data_files=[data_file.name])
             result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             return result.stdout
 
@@ -457,17 +458,18 @@ def parse_args():
     parser.add_argument("-t", "--temperature", type=float, help="Temperature for model generation")
     parser.add_argument("-n", "--num-samples", type=int, help="Number of samples to generate")
     parser.add_argument("--map", type=str, help="Transform given data")
-    parser.add_argument("--transformer", type=str, help="Data transformation shell command")
+    parser.add_argument("--function", type=str, help="Data transformation shell command")
     parser.add_argument("--extension", type=str, help="File extension for transformed data")
     parser.add_argument("--answer", action="store_true", help="Extract answer")
     parser.add_argument("--code", action="store_true", help="Extract code")
     parser.add_argument("--distribution", type=str, help="Show distribution of samples")
-    parser.add_argument("--cluster", type=str, help="Cluster given data")
+    parser.add_argument("--partition", type=str, help="Partition data into equivalence classes")
     parser.add_argument("--equivalence", type=str, help="Equivalence relation shell command")
     parser.add_argument("--equal", type=str, help="Check equivalence of data to the specified value")
     parser.add_argument("--predicate", action="store_true", help="Evaluate truthfulness of the predicate")
     parser.add_argument("--quiet", action="store_true", help="Do not print data on stdout")
     parser.add_argument("--debug", action="store_true", help="Print logs on stderr")
+    parser.add_argument("--version", action="store_true", help="Print version")
     parser.add_argument("-c", "--configure", action="store_true", help="Set default options")
     return parser.parse_args()
 
@@ -483,12 +485,12 @@ def validate_arguments(arguments):
     if sum([bool(arguments.query),
             bool(arguments.prompt),
             bool(arguments.distribution),
-            bool(arguments.evaluate)]) > 1:
-        print("choose only one of (1) query string, (2) prompt files, (3) sample distribution, (4) sample evaluation", file=sys.stderr)
+            bool(arguments.map)]) > 1:
+        print("choose only one of (1) query string, (2) prompt files, (3) sample distribution, (4) data transformation", file=sys.stderr)
         exit(1)
 
-    if ((arguments.answer or arguments.code) and arguments.extractor):
-        print("the answer/code options cannot be used with a custom extractor", file=sys.stderr)
+    if ((arguments.answer or arguments.code) and arguments.function):
+        print("the answer/code options cannot be used with a custom function", file=sys.stderr)
         exit(1)
 
     if (arguments.code and arguments.answer):
@@ -638,15 +640,15 @@ def configure(config):
             },
             {
                 "type": "list",
-                "name": "extractor",
-                "message": "Transformer for --map:",
-                "choices": config['extractors'],
-                "default": config['default']['extractor']
+                "name": "function",
+                "message": "Function for --map:",
+                "choices": config['functions'],
+                "default": config['default']['function']
             },
             {
                 "type": "list",
                 "name": "equivalence",
-                "message": "Relation for --cluster/--diff/--equal:",
+                "message": "Relation for --partition/--diff/--equal:",
                 "choices": config['equivalences'],
                 "default": config['default']['equivalence']
             },
@@ -658,65 +660,70 @@ def configure(config):
     
 
 def main():
+    arguments = parse_args()
+
+    if arguments.version:
+        print(VERSION)
+        exit(0)
+    
+    validate_arguments(arguments)
+    
     if os.path.isfile(USER_CONFIG_FILE):
         with open(USER_CONFIG_FILE, 'r') as file:
             config = yaml.safe_load(file)
     else:
         config = yaml.safe_load(DEFAULT_CONFIG)
-
-    arguments = parse_args()
-    validate_arguments(arguments)
-
+    
     if arguments.configure:
         configure(config)
+        exit(0)
+
+    if arguments.query:
+        tasks = [Task.unnamed(arguments.query)]
+    elif (not arguments.prompt and not arguments.query):
+        tasks = [Task.unnamed(sys.stdin.read())]
     else:
+        tasks = process_prompt_files(arguments.prompt)
 
-        if arguments.query:
-            tasks = [Task.unnamed(arguments.query)]
-        elif (not arguments.prompt and not arguments.query):
-            tasks = [Task.unnamed(sys.stdin.read())]
+    settings = dict()
+
+    if arguments.function:
+        settings['function'] = arguments.function
+    else:
+        settings['function'] = config['default']['function']
+
+    if arguments.answer:
+        settings['function'] = ANSWER_EXTRACTOR
+        new_tasks = []
+        for t in tasks:
+            new_tasks.append(Task(t.id, t.prompt + " " + ANSWER_FORMAT_DIRECTIVE))
+        tasks = new_tasks
+
+    if arguments.code:
+        settings['function'] = CODE_EXTRACTOR
+
+    query = LLMQuery(
+        models = arguments.model if arguments.model else config['default']['models'],
+        temperature = str(arguments.temperature) if arguments.temperature else config['default']['temperature'],
+        num_samples = arguments.num_samples if arguments.num_samples else 1,
+        tasks = tasks
+    )
+
+    if arguments.map:
+        print(load_data(arguments.map))
+        exit(1)
+
+    if len(query.tasks) * len(query.models) * query.num_samples == 1 and not arguments.output:
+        if settings['function'] == '__ID__':
+            stream_response_to_stdout(tasks[0].prompt, query.models[0], query.temperature, config)
         else:
-            tasks = process_prompt_files(arguments.prompt)
-
-        settings = dict()
-
-        if arguments.extractor:
-            settings['extractor'] = arguments.extractor
-        else:
-            settings['extractor'] = config['default']['extractor']
-
-        if arguments.answer:
-            settings['extractor'] = ANSWER_EXTRACTOR
-            new_tasks = []
-            for t in tasks:
-                new_tasks.append(Task(t.id, t.prompt + " " + ANSWER_FORMAT_DIRECTIVE))
-            tasks = new_tasks
-
-        if arguments.code:
-            settings['extractor'] = CODE_EXTRACTOR
-
-        query = LLMQuery(
-            models = arguments.model if arguments.model else config['default']['models'],
-            temperature = str(arguments.temperature) if arguments.temperature else config['default']['temperature'],
-            num_samples = arguments.num_samples if arguments.num_samples else 1,
-            tasks = tasks
-        )
-
-        if arguments.extract:
-            print(load_data(arguments.extract))
-            exit(1)
-
-        if len(query.tasks) * len(query.models) * len(query.num_samples) == 1 and not arguments.output:
-            if settings['extractor'] == '__ID__':
-                stream_response_to_stdout(tasks[0].prompt, query.models[0], query.temperature, config)
-            else:
-                i = next(LLMStream(query, config))
-                answer = extract(i.content, i.task, settings['extractor'])
-                print(answer, end="")
-                if os.isatty(sys.stdout.fileno()):
-                    print()
-        else:
-            execute_batch_jobs(query, settings, arguments.output, config)
+            i = next(LLMStream(query, config))
+            answer = transform(i.content, i.task, settings['function'])
+            print(answer, end="")
+            if os.isatty(sys.stdout.fileno()):
+                print()
+    else:
+        execute_batch_jobs(query, settings, arguments.output, config)
 
 
 if __name__ == "__main__":

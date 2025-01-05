@@ -13,7 +13,7 @@ flowchart LR
     - Custom extractors
     - Custom evaluators`"]
     B --> C["`**Analysis:**
-    - Semantic clusters
+    - Semantic partitioning
     - Uncertainty measures
     - Comparing distributions
     - CSV/JSON export
@@ -32,23 +32,19 @@ Install the tool by running the command `python -m pip install .`
 
 ## Basic Usage
 
-Run the following command to ask a question directly:
+An LLM can be queried via a argument, a specified prompt file, or via stdin:
 
     llm-play "What is the capital of China?"
-
-You can input a query stored in a file, such as `prompt.md`:
-
+    llm-play --prompt prompt.md
     llm-play < prompt.md
     
-or
+The argument and the file options are mutually-exclusive. Both take take precedence over the stdin.
 
-    llm-play --prompt prompt.md
-
-Write the response to a file (e.g., `output.md`):
+In this case, the response is printed on stdout, and can be redirected to a file:
 
     llm-play "What is the capital of China?" > output.md
 
-For convenience, default settings such as the model and its temperature can be configured globally using the option `-c/--configure`. These settings are saved in `~/.llm_play.yaml`:
+For convenience, default settings such as the model and its temperature can be configured interactively with `-c/--configure`. These settings are saved in `~/.llm_play.yaml`:
 
     llm-play -c
 
@@ -58,27 +54,29 @@ Command-line options take precedence over the default settings.
 
 To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, sample 10 responses, and save the results into the directory `samples`, use the command:
 
-    llm-play "What is the capital of China?" \
+    llm-play --prompt prompts/question1.md \
              --model qwen2.5-7b-instruct qwen2.5-coder-7b-instruct \
              --temperature 0.5 \
              -n 10 \
              --output samples
              
-The samples will be stored in a filesystem tree as follows (`__unnamed__` is the prompt id, `__unnamed__.md` contains the prompt, `0.md`, ..., `9.md` are the samples):
+The samples will be stored in a filesystem tree as follows:
 
     samples
     ├── qwen2.5-7b-instruct_1.0
-    │   ├── __unnamed__.md
-    │   └── __unnamed__
-    │       ├── 0.md
+    │   ├── question1_2f73f5f.md
+    │   └── question1_2f73f5f
+    │       ├── 0_0.md
     │       ...
-    │       └── 9.md
+    │       └── 9_4.md
     └── qwen2.5-coder-7b-instruct_1.0
-        ├── __unnamed__.md
-        └── __unnamed__
-            ├── 0.md
+        ├── question1_2f73f5f.md
+        └── question1_2f73f5f
+            ├── 0_0.md
             ...
-            └── 9.md
+            └── 9_7.md
+            
+In this tree, `question1` is the prompt label, `2f73f5f` is its truncated SHA1 hash, `question1_2f73f5f.md` contains the prompt. Prompts with repeating hashes are skipped. `0_0.md`, ..., `9_4.md` are the samples. In `5_3.md`, `5` is the sample identifier, and `3` is the identifier of its equivalence class. Please see [Partitioning](#partitioning) for details.
             
 The data can also be stored in CSV and JSON formats. Please see [Data Formats](#data-formats) for details.
 
@@ -86,90 +84,96 @@ To query a model with prompts contained in all files matching `*.md` in the curr
 
     llm-play --prompt *.md --output samples
     
-When a query is supplied through stdin or as a command-line argument, the prompt is automatically assigned the identifier `__unnamed__`. However, if the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its identifier. In cases where multiple files are provided, ensure that their names are unique to avoid conflicts.
+If the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its label. When a query is supplied through stdin or as a command-line argument, the label is empty.
     
 To update an existing store, the `--update` option should be used instead of `--output`:
     
     llm-play --prompt *.md --update samples
 
-In case of collisions, i.e. samples for the same (model, temperature, prompt) tuple already exist in the store, the matching prompt files will be updated, and the old responses are removed. When updating an existing store, maitain the following invariant: unique prompt identifiers correspond to unique prompts across the entire store.
+In case of collisions, i.e. samples for the same (model, temperature, prompt) tuple already exist in the store, the prompt files with matching hashes will be updated, and the old responses are removed.
 
 ## Data Transformation
 
-Data transformation can be used, for example, to extract relevant information from the generated samples or from data extracted in earlier stages. Transformation is performed by shell commands defined using the [shell template language](#shell-template-language). The special transformer `__ID__` simply returns the entire string without modification.
+Data transformation can be used, for example, to extract relevant information from the generated samples or from data extracted in earlier stages. Transformation is performed by shell commands defined using the [shell template language](#shell-template-language). The special function `__ID__` simply returns the entire string without modification.
 
 This is to extract text within the tag `<answer> ... </answer>` from all samples in `samples`, and save the results into the directory `extracted`:
 
     llm-play --map samples \
-             --output extracted \
-             --transformer "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
+             --function "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%" \
+             --output extracted
 
-The above transformer searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
+The above function searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
 
-A transformation of a datum fails, e.g. if it does not contain any relevant information to extract, iff the following two conditions hold: (1) the transformer terminates with a non-zero exit code, and (2) its stdout is empty. In this case, the datum is ignored.
+A transformation of a datum fails, e.g. if it does not contain any relevant information to extract, iff the function terminates with a non-zero exit code.
 
 By default, the extracted data is saved into "txt" files. The file extension can be specified using the `--extension` options, e.g. `--extension py` resulting in:
 
     extracted
     └── qwen2.5-7b-instruct_1.0
-        ├── __unnamed__.md
-        └── __unnamed__
-            ├── 0.py
-            ├── 1.py
+        ├── _2f73f5f.md
+        └── _2f73f5f
+            ├── 0_0.py
+            ├── 1_1.py
             ...
-            └── 9.py
-           
+            └── 9_9.py
 
 ### On-the-fly Transformation
 
-Data can be extracted on-the-fly while querying LLMs if `--transformer` is explicitly provided:
+Data can be extracted on-the-fly while querying LLMs if `--function` is explicitly provided:
 
     llm-play "What is the capital of China? Wrap the final answer with <answer> </answer>" \
-             --transformer "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
+             --function "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
 
-There are built-in helper functions to simplify extracting answers or code when performed on-the-fly. These helpers automatically augment the prompt and apply the necessary extractors to extract the relevant parts of the sample (the default extactor and equivalence options are ignored).
+There are built-in convenience functions to simplify extracting answers or code. The option `--answer` automatically augment the prompt and apply the necessary transformation to extract the relevant parts of the response:
 
     llm-play "What is the capital of China?" --answer
-    llm-play "Write a Python function f(n: int) -> int that computes the n-th Catalan number" --code
     
-## Clustering
+The option `--code` extracts a code block from Markdown formatting.
+    
+    llm-play "Write a Python function f(n: int) -> int that computes the n-th Catalan number" --code
+
+## Partitioning
+
+By default, all responses are partitioned into equivalence classes based their syntactic identity using the relation `__ID__`.
 
 To group answers into equivalence classes based qwen2.5's judgement, use the following command:
 
-    llm-play --cluster data \
-             --output clusters \
-             --equivalence "llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%DATA1%%\" and \"%%DATA2%%\"?' --predicate"
+    llm-play --partition data \
+             --equivalence "llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%DATA1%%\" and \"%%DATA2%%\"?' --predicate" \ 
+             --output classes
+             
+Paritioning can be performed for a subset of data:
 
-Clustering can be performed for a subset of data:
-
-    llm-play --cluster data/qwen2.5-7b-instruct_1.0/a/ \
-             --output clusters \
-             --equivalence "$EQUIVALENCE"
+    llm-play --partition data/qwen2.5-7b-instruct_1.0/a/ \
+             --equivalence "$EQUIVALENCE" \
+             --output classes
     
 When using the filesystem tree format, the equivalence class identifiers will be added to the end of output file names, after the underscore:
 
-    clusters
+    classes
     └── qwen2.5-7b-instruct_1.0
-        ├── __unnamed__.md
-        └── __unnamed__
+        ├── _69a3a31.md
+        └── _69a3a31
             ├── 0_0.md
             ├── 1_0.md
             ...
             └── 9_3.md
+            
+The class identifiers across multiple directories are not consistent.
 
 This equivalence is defined via a shell command that exits with the zero status code when two answers are equivalent. The classes are computed using the [disjoint-set algorithm](https://en.wikipedia.org/wiki/Disjoint-set_data_structure).
 
-Equivalence relations can be composed by repeated clustering:
+Equivalence relations can be composed by repeated partitioning:
 
-    llm-play --cluster data --output clusters1 --equivalence "$EQUIVALENCE1"
-    llm-play --cluster clusters1 --output clusters2 --equivalence "$EQUIVALENCE2"
+    llm-play --partition data --equivalence "$EQUIVALENCE1" --output classes1
+    llm-play --partition classes1 --equivalence "$EQUIVALENCE2" --output classes2
     
 The equivalence relation can be configured:
 
 - Using the `-c` option to select a predefined equivalence command.
 - Or, specifying a custom equivalence command using the `--equivalence` option.
 
-Clustering can also be performed on-the-fly while querying models if any non-trivial equivalence relations is specified explicitly with `--equivalence`. The trivial relation `__ID__` means syntactic identity and effectively disables clustering.
+Paritioning can also be performed on-the-fly while querying models if any non-trivial equivalence relations is specified explicitly with `--equivalence`.
 
 ## Data Analysis
 
@@ -179,11 +183,11 @@ To show the distribution of equivalence classes of outputs (across one or more m
 
 A distribution can be analyzed for a subset of data:
 
-    llm-play --distribution data/a.md/qwen2.5-7b-instruct_1.0
+    llm-play --distribution data/qwen2.5-7b-instruct_1.0/a_2f73f5f
     
 This will compute and visualise
 
-- [empirical probability](https://en.wikipedia.org/wiki/Empirical_probability) of clusters;
+- [empirical probability](https://en.wikipedia.org/wiki/Empirical_probability) of equivalence classes;
 - semantic uncertainty (semantic entropy) computed over the equivalence classes
 
 Related work on semantic uncertainty:
@@ -194,15 +198,15 @@ Related work on semantic uncertainty:
 
 The distribution can be exported with `--output` into either CSV or JSON formats (not a filesystem tree).
     
-Note that `--distribution` does not itself perform any data extraction or clustering.
+Note that `--distribution` does not itself perform any data extraction or partitioning.
 
 ### Comparing Distributions
 
-To analyse difference between distributions of clusters, e.g. for different model temperatures, use the following command:
+To analyse difference between distributions of equivalence classes, e.g. for different model temperatures, use the following command:
 
-    llm-play --diff data/qwen2.5-7b-instruct_1.0/a data/qwen2.5-7b-instruct_0.5/a
+    llm-play --diff data/qwen2.5-7b-instruct_1.0/a_2f73f5f data/qwen2.5-7b-instruct_0.5/a_2f73f5f
     
-This command aligns the cluster labels between these two distributions w.r.t. the specified equivalence relation, as well as computes some useful statistics:
+This command aligns the class labels between these two distributions w.r.t. the specified equivalence relation, as well as computes some useful statistics:
 
 - [Wasserstein metric](https://en.wikipedia.org/wiki/Wasserstein_metric)
 - [Permutation test](https://en.wikipedia.org/wiki/Permutation_test) based on the Wasserstein metric
@@ -213,11 +217,11 @@ The difference can be exported with `--output` into either CSV or JSON formats (
 
 ## Evaluation
 
-The samples or extracted data can be evaluated using transformers. This example evaluates whether each datum contains exactly one word:
+The samples or extracted data can be evaluated using function. This example evaluates whether each datum contains exactly one word:
 
-    llm-play --map data --transformer 'wc -w <<< %%ESCAPED_DATA%% | grep -q ^1$ && echo Yes || echo No'
+    llm-play --map data --function 'wc -w <<< %%ESCAPED_DATA%% | grep -q ^1$ && echo Yes || echo No'
 
-Special evaluation transformers are provided for convenience. To evaluate data by checking if each datum is equal to a specific value, i.e. `Beijing`, use:
+Special evaluation function are provided for convenience. To evaluate data by checking if each datum is equal to a specific value, i.e. `Beijing`, use:
 
     llm-play --map data --equal Beijing
     
@@ -225,7 +229,7 @@ The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt 
 
 Evalation can be done for a subset of outputs:
 
-    llm-play --map data/qwen2.5-7b-instruct_1.0/a --equal Beijing
+    llm-play --map data/qwen2.5-7b-instruct_1.0/a_2f73f5f --equal Beijing
     
 ### Predicates
 
@@ -253,30 +257,34 @@ The supported data formats are
 
 The argument of `--output` is treated as a directory path unless it ends with `.json` or `.csv`.
 
-FS-tree and JSON formats are interchangeble. They both can be used as outputs of LLM sampling, and as inputs or outputs of the `--map` and `--cluster` commands. Only FS-tree and JSON can be updated with `--update`.
+FS-tree and JSON formats are interchangeble. They both can be used as outputs of LLM sampling, and as inputs or outputs of the `--map` and `--partition` commands. Only FS-tree and JSON can be updated with `--update`.
 
-CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as an alternative output format for `--map` and `--cluster`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate data longer than 30 characters. If at least one datum is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`. Different commands produce different CSV schemas.
+CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as an alternative output format for `--map` and `--partition`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate data longer than 30 characters. If at least one datum is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`. Different commands produce different CSV schemas.
 
-The identity transformer can be used to convert data between different formats, e.g.
+The identity function can be used to convert data between different formats, e.g.
 
-    llm-play --map data --output data.json --transformer __ID__
-    llm-play --map data.json --output data.csv --transformer __ID__
+    llm-play --map data --function __ID__ --output data.json
+    llm-play --map data.json --function __ID__ --output data.csv
     
 ## Shell Template Language
 
 The shell template language allows dynamic substitution of specific placeholders with runtime values before executing a shell command. These placeholders are instantiated and replaced with their corresponding values before the command is executed by the system shell.
 
-Available placeholders:
+Available placeholders for data:
 
-- `%%DATA%%` - replaced with the raw output (sample or extracted information).
-- `%%DATA_FILE%%` - replaced with a path to a temporary file containing the output.
-- `%%PROMPT%%` - replaced with the raw input prompt.
-- `%%PROMPT_FILE%%` - replaced with a path to a temporary file containing the input prompt.
-- `%%PROMPT_ID%%` - replaced with the prompt id.
+- `%%DATA%%` - the single-lined, stripped, truncated to 100 characters and shell-escaped text.
+- `%%FULL_DATA%%` - the original shell-escaped text.
+- `%%RAW_DATA%%` - the single-lined, stripped, truncated to 100 characters text.
+- `%%RAW_FULL_DATA%%` - combines the two above.
 
-For commands that require multiple outputs, indexed placeholders are provided, e.g. `%%DATA1%%`, `%%DATA2%%`.
+Similarly, `RAW_`, `FULL_`, and `RAW_FULL_` variants are provided for the following variables:
 
-Variants of shell-escaped placeholders are available for safety when handling special characters, e.g. `%%ESCAPED_DATA%%`.
+- `%%DATA_FILE%%` - a path to a temporary file containing the data.
+- `%%PROMPT%%` - the prompt content.
+- `%%PROMPT_FILE%%` - a path to a temporary file containing the prompt.
+- `%%PROMPT_LABEL%%` - the prompt label.
+
+For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%DATA1%%` and `%%PROMPT2_LABEL%%`.
 
 ## Troubleshooting
 
