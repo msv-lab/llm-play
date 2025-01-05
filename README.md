@@ -32,7 +32,7 @@ Install the tool by running the command `python -m pip install .`
 
 ## Basic Usage
 
-An LLM can be queried via a argument, a specified prompt file, or via stdin:
+An LLM can be queried via an argument, a specified prompt file, or stdin:
 
     llm-play "What is the capital of China?"
     llm-play --prompt prompt.md
