@@ -139,7 +139,7 @@ By default, all responses are partitioned into equivalence classes based their s
 To group answers into equivalence classes based qwen2.5's judgement, use the following command:
 
     llm-play --partition data \
-             --equivalence "llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%DATA1%%\" and \"%%DATA2%%\"?' --predicate" \ 
+             --equivalence "llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%CONDENSED_DATA1%%\" and \"%%CONDENSED_DATA2%%\"?' --predicate" \ 
              --output classes
              
 Paritioning can be performed for a subset of data:
@@ -272,19 +272,22 @@ The shell template language allows dynamic substitution of specific placeholders
 
 Available placeholders for data:
 
-- `%%DATA%%` - the single-lined, stripped, truncated to 100 characters and shell-escaped text.
-- `%%FULL_DATA%%` - the original shell-escaped text.
-- `%%RAW_DATA%%` - the single-lined, stripped, truncated to 100 characters text.
-- `%%RAW_FULL_DATA%%` - combines the two above.
+- `%%CONDENSED_ESCAPED_DATA%%` - the single-lined, stripped, truncated to 100 characters and shell-escaped text.
+- `%%ESCAPED_DATA%%` - the shell-escaped text.
+- `%%CONDENCED_DATA%%` - the single-lined, stripped, truncated to 100 characters text.
+- `%%RAW_DATA%%` - the original text.
 
-Similarly, `RAW_`, `FULL_`, and `RAW_FULL_` variants are provided for the following variables:
+Similarly, `RAW_`, `ESCAPED_`, `CONDENCED_` and `CONDENSED_ESCAPED_` variants are provided for the following variables:
+
+- `%%PROMPT%%` - the prompt content.
+
+The `ESCAPED_` variants are provided for the following variables:
 
 - `%%DATA_FILE%%` - a path to a temporary file containing the data.
-- `%%PROMPT%%` - the prompt content.
 - `%%PROMPT_FILE%%` - a path to a temporary file containing the prompt.
 - `%%PROMPT_LABEL%%` - the prompt label.
 
-For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%DATA1%%` and `%%PROMPT2_LABEL%%`.
+For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%RAW_DATA1%%` and `%%PROMPT2_LABEL%%`.
 
 ## Troubleshooting
 
