@@ -144,7 +144,7 @@ To group answers into equivalence classes based qwen2.5's judgement, use the fol
              
 Paritioning can be performed for a subset of data:
 
-    llm-play --partition data/qwen2.5-7b-instruct_1.0/a/ \
+    llm-play --partition data/qwen2.5-7b-instruct_1.0/a_2f73f5f \
              --equivalence "$EQUIVALENCE" \
              --output classes
     
