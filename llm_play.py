@@ -40,7 +40,8 @@ CODE_EXTRACTOR = r"awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) pr
 
 DEFAULT_CONFIG = fr"""
 default:
-  model: qwen2.5-72b-instruct
+  models:
+    - qwen2.5-72b-instruct
   temperature: 1.0
   extractor: __ID__
   equivalence: __ID__
@@ -118,7 +119,9 @@ equivalences:
 
 DATA_STREAM_TABLE_HEADER = ['Model', 'Temp.', 'Task', 'Sample', 'Content']
 
-USER_CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".llm_play.yaml")        
+USER_CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".llm_play.yaml")
+
+CSV_TRUNCATE_LENGTH = 30
 
 
 @dataclass
@@ -159,7 +162,7 @@ def get_provider_by_model(model, config):
     raise ValueError(f"no provider for model {model}")
 
 
-class LLMSampleStream:
+class LLMStream:
     def __init__(self, query, config):
         self.temperature = query.temperature
         self.config = config
@@ -171,6 +174,16 @@ class LLMSampleStream:
             for t in query.tasks:
                 self.execution_plan.append((m, t, query.num_samples))
         self.size = len(query.models) * len(query.tasks) * query.num_samples
+
+        max_model_name_len = max(len(m) for m in query.models)
+        max_task_name_len = max(len(t.id) for t in query.tasks)
+        self.table_format = [
+            (max(max_model_name_len, len(DATA_STREAM_TABLE_HEADER[0])), 'l'),
+            (len(DATA_STREAM_TABLE_HEADER[1]), 'r'),
+            (min(max(max_task_name_len, len(DATA_STREAM_TABLE_HEADER[2])), 20), 'l'),
+            (len(DATA_STREAM_TABLE_HEADER[3]), 'r'),
+            (None, 'l'),
+        ]
 
     def __iter__(self):
         return self
@@ -222,11 +235,17 @@ class LLMSampleStream:
     def next_batch(self):
         return self.current_index > 0 and len(self.current_sample_index) == 0
 
+    def table_format(self):
+        return self.table_format
+
+    def table_header(self):
+        return DATA_STREAM_TABLE_HEADER
+
     def __len__(self):
         return self.size
 
 
-def stream_sample(prompt, model, temperature, config):
+def stream_response_to_stdout(prompt, model, temperature, config):
     provider = get_provider_by_model(model, config)
     client = OpenAI(
         api_key=os.getenv(config['providers'][provider]['key_env_variable']),
@@ -245,6 +264,68 @@ def stream_sample(prompt, model, temperature, config):
         print()
 
 
+class JSONStream:
+    ```
+    {
+        "prompts":
+        "model_id": {
+            "temperature": {
+            }
+            
+        },
+        ...
+    }
+    ```
+    def __init__(self, data):
+        self.current_item_index = 0
+        self.current_sample_index = 0
+
+        self.size = 
+
+        max_model_name_len = max(len(m) for m in query.models)
+        max_task_name_len = max(len(t.id) for t in query.tasks)
+        self.table_format = 
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.current_item_index >= len(self):
+            raise StopIteration
+        self.current_item_index += 1
+        if len(self.cache) == 0:
+            model, task, n = self.execution_plan.pop()
+            samples = self._sample(model, task.prompt, self.temperature, n)
+            for s in samples:
+                self.cache.append((model, task, self.current_sample_index, s))
+                self.current_sample_index += 1
+            if n > len(samples):
+                self.execution_plan.append((model, task, n - len(samples)))
+            else:
+                self.current_sample_index = 0
+        model, task, sample_id, sample = self.cache.pop()
+        return StreamItem(
+            model = model,
+            temperature = self.temperature,
+            task = task,
+            sample_id = sample_id,
+            class_id = sample_id,
+            content = sample)
+
+    def next_batch(self):
+        return self.current_index > 0 and len(self.current_sample_index) == 0
+
+    def table_format(self):
+        return self.table_format
+
+    def table_header(self):
+        return DATA_STREAM_TABLE_HEADER
+
+    def __len__(self):
+        return self.size
+        
+
+
 def recreate_directory(path):
     if os.path.exists(path):
         shutil.rmtree(path)
@@ -260,10 +341,10 @@ def to_single_line(text):
 
 def execute_batch_jobs(query, settings, output, config):
     recreate_directory(output)
-    stream = LLMSampleStream(query, config)
+    stream = LLMStream(query, config)
     if len(stream) > 1:
         #TODO: check if terminal
-        printer = TablePrinter(stream_item_table_format_by_llm_query(query), DATA_STREAM_TABLE_HEADER)
+        printer = TablePrinter(stream.table_format(), DATA_STREAM_TABLE_HEADER)
     for i in stream:
         model_path = os.path.join(output, f"{i.model}_{i.temperature}")
         os.makedirs(model_path, exist_ok=True)
@@ -280,7 +361,7 @@ def execute_batch_jobs(query, settings, output, config):
         with open(os.path.join(task_path, f"{i.sample_id}.md"), "w") as file:
             file.write(result)
             if len(stream) > 1:
-                row = (i.model, i.temperature, i.task.id, i.sample_id, to_single_line(i.content))
+                row = (i.model, i.temperature, i.task.id, i.sample_id, to_single_line(result))
                 printer.print_row(row)
 
 
@@ -313,7 +394,7 @@ def instantiate_shell_template(t, task, prompt_file, data, data_files):
 
 def extract(sample, task, extractor):
     with tempfile.NamedTemporaryFile() as prompt_file:
-        prompt_file.write(prompt.encode())
+        prompt_file.write(task.prompt.encode())
         prompt_file.flush()
         with tempfile.NamedTemporaryFile() as data_file:
             data_file.write(sample.encode())
@@ -322,16 +403,6 @@ def extract(sample, task, extractor):
             result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             return result.stdout
 
-def stream_item_table_format_by_llm_query(query):
-    max_model_name_len = max(len(m) for m in query.models)
-    max_task_name_len = max(len(t.id) for t in query.tasks)
-    return [
-        (max(max_model_name_len, len(DATA_STREAM_TABLE_HEADER[0])), 'l'),
-        (len(DATA_STREAM_TABLE_HEADER[1]), 'r'),
-        (min(max(max_task_name_len, len(DATA_STREAM_TABLE_HEADER[2])), 20), 'l'),
-        (len(DATA_STREAM_TABLE_HEADER[3]), 'r'),
-        (None, 'l'),
-    ]
 
 class TablePrinter:
 
@@ -375,27 +446,28 @@ class TablePrinter:
                 formatted_row.append(self._truncate(cell_content, col_width).rjust(col_width))
         print((" " + u'\u2502' + " ").join(formatted_row))
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="llm-play interface")
     parser.add_argument("query", nargs='?', type=str, help="Query string")
     parser.add_argument("--prompt", nargs='+', type=str, help="Prompt files")
-    parser.add_argument("--output", type=str, help="Output directory")
+    parser.add_argument("--output", type=str, help="Output FS-tree/JSON/CSV")
+    parser.add_argument("--update", type=str, help="FS-tree/JSON to update")
     parser.add_argument("--model", nargs='+', type=str, help="List of models to query")
-    parser.add_argument("--temperature", type=float, help="Temperature for model generation")
+    parser.add_argument("-t", "--temperature", type=float, help="Temperature for model generation")
     parser.add_argument("-n", "--num-samples", type=int, help="Number of samples to generate")
-    parser.add_argument("--extract", type=str, help="Extract data in directory")
-    parser.add_argument("--extractor", type=str, help="Data extraction shell command")
-    parser.add_argument("--extension", type=str, help="File extension for extracted data")
-    parser.add_argument("--answer", action="store_true", help="Answer question")
-    parser.add_argument("--code", action="store_true", help="Generate code")
-    parser.add_argument("--distribution", type=str, help="Show distribution of samples in the directory")
+    parser.add_argument("--map", type=str, help="Transform given data")
+    parser.add_argument("--transformer", type=str, help="Data transformation shell command")
+    parser.add_argument("--extension", type=str, help="File extension for transformed data")
+    parser.add_argument("--answer", action="store_true", help="Extract answer")
+    parser.add_argument("--code", action="store_true", help="Extract code")
+    parser.add_argument("--distribution", type=str, help="Show distribution of samples")
+    parser.add_argument("--cluster", type=str, help="Cluster given data")
     parser.add_argument("--equivalence", type=str, help="Equivalence relation shell command")
-    parser.add_argument("--evaluate", type=str, help="Evaluate outputs in the directory")
     parser.add_argument("--equal", type=str, help="Check equivalence of data to the specified value")
-    parser.add_argument("--evalautor", type=str, help="Evaluator shell command")
     parser.add_argument("--predicate", action="store_true", help="Evaluate truthfulness of the predicate")
-    parser.add_argument("--export", type=str, help="Export data from directory")
-    parser.add_argument("--report", type=str, help="Output CSV or JSON file")
+    parser.add_argument("--quiet", action="store_true", help="Do not print data on stdout")
+    parser.add_argument("--debug", action="store_true", help="Print logs on stderr")
     parser.add_argument("-c", "--configure", action="store_true", help="Set default options")
     return parser.parse_args()
 
@@ -543,24 +615,31 @@ def load_data(path_query):
 
 
 def configure(config):
-    choice = InquirerPy.prompt([
+    model_choices = []
+    for m in [entry['name'] for entry in config['models']]:
+        if m in config['default']['models']:
+            model_choices.append(InquirerPy.base.Choice(m, enabled=True))
+        else:
+            model_choices.append(InquirerPy.base.Choice(m, enabled=False))            
+    selected = InquirerPy.prompt([
             {
-                "type": "list",
-                "name": "model",
-                "message": "Query model:",
-                "choices": [entry['name'] for entry in config['models']],
-                "default": config['default']['model']
+                "type": "checkbox",
+                "name": "models",
+                "message": "Models:",
+                "choices": model_choices,
+                "validate": lambda result: len(result) >= 1,
+                "invalid_message": "should be at least 1 selection"
             },
             {
                 "type": "input",
                 "name": "temperature",
-                "message": "Set model temperature:",
+                "message": "Sampling temperature:",
                 "default": str(config['default']['temperature'])
             },
             {
                 "type": "list",
                 "name": "extractor",
-                "message": "Data extractor for --extract:",
+                "message": "Transformer for --map:",
                 "choices": config['extractors'],
                 "default": config['default']['extractor']
             },
@@ -572,9 +651,9 @@ def configure(config):
                 "default": config['default']['equivalence']
             },
     ])
-    if choice:
-        config['default'] = choice
-    with open(user_config_file, 'w') as f:
+    if selected:
+        config['default'] = selected
+    with open(USER_CONFIG_FILE, 'w') as f:
         yaml.dump(config, f, width=float("inf"))
     
 
@@ -617,7 +696,7 @@ def main():
             settings['extractor'] = CODE_EXTRACTOR
 
         query = LLMQuery(
-            models = arguments.model if arguments.model else [config['default']['model']],
+            models = arguments.model if arguments.model else config['default']['models'],
             temperature = str(arguments.temperature) if arguments.temperature else config['default']['temperature'],
             num_samples = arguments.num_samples if arguments.num_samples else 1,
             tasks = tasks
@@ -627,12 +706,11 @@ def main():
             print(load_data(arguments.extract))
             exit(1)
 
-        if not arguments.output:
-            assert(len(query.tasks) * len(query.models) * len(query.num_samples) == 1)
+        if len(query.tasks) * len(query.models) * len(query.num_samples) == 1 and not arguments.output:
             if settings['extractor'] == '__ID__':
-                stream_sample(tasks[0].prompt, query.models[0], query.temperature, config)
+                stream_response_to_stdout(tasks[0].prompt, query.models[0], query.temperature, config)
             else:
-                i = next(LLMSampleStream(query, config))
+                i = next(LLMStream(query, config))
                 answer = extract(i.content, i.task, settings['extractor'])
                 print(answer, end="")
                 if os.isatty(sys.stdout.fileno()):

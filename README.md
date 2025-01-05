@@ -64,7 +64,7 @@ To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with
              -n 10 \
              --output samples
              
-Three store types are supported: `filesystem tree`, `json` and `csv`. In above case, the samples will be stored in a filesystem tree as follows (`__unnamed__` is the prompt id, `__unnamed__.md` contains the prompt, `0.md`, ..., `9.md` are the samples):
+The samples will be stored in a filesystem tree as follows (`__unnamed__` is the prompt id, `__unnamed__.md` contains the prompt, `0.md`, ..., `9.md` are the samples):
 
     samples
     ├── qwen2.5-7b-instruct_1.0
@@ -80,7 +80,7 @@ Three store types are supported: `filesystem tree`, `json` and `csv`. In above c
             ...
             └── 9.md
             
-Other formats can be enabled by providing a path that ends with the corresponding extensions: `.json` or `.csv`. For example, specifying `--output samples.csv` will export the samples in CSV format. Note that the CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate data longer than 30 characters. If at least one datum is truncated, the column name is changed from `Content` to `Content [Truncated]`. The JSON encoding is equivalent to the filesystem encoding, and can be loaded back for further analysis.
+The data can also be stored in CSV and JSON formats. Please see [Data Formats](#data-formats) for details.
 
 To query a model with prompts contained in all files matching `*.md` in the current directory, use the command:
 
@@ -96,7 +96,7 @@ In case of collisions, i.e. samples for the same (model, temperature, prompt) tu
 
 ## Data Transformation
 
-Data transformation can be used, for example, to extract relevant information from the generated samples or from data extracted in earlier stages. Transformation is performed by shell commands defined using a shell template language (described below). The special transformer `__ID__` simply returns the entire string without modification.
+Data transformation can be used, for example, to extract relevant information from the generated samples or from data extracted in earlier stages. Transformation is performed by shell commands defined using the [shell template language](#shell-template-language). The special transformer `__ID__` simply returns the entire string without modification.
 
 This is to extract text within the tag `<answer> ... </answer>` from all samples in `samples`, and save the results into the directory `extracted`:
 
@@ -246,6 +246,20 @@ It is equivalent to the following:
               --quiet
               
 Additionally, the predicate will terminate with the zero exit code iff it passes the evaluation. Predicates can only be applied to interactive commands with a single model/task/response, and without a specified output.
+
+## Data Formats
+
+The tool operates three formats:
+
+- Filesystem tree (FS-tree) designed for human redability
+- JSON files designed for storage and sharing
+- CSV files for evaluation
+
+The argument of `--output` is treated as a directory path unless it ends with `.json` or `.csv`.
+
+The FS-tree and JSON format are interchangeble. They both cab used as outputs of the LLM sampling command, and inputs and outputs of the `--map` and `--cluster` commands. Only FS-tree and JSON can be updated with `--update`.
+
+CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as one of the supported output formats for `--map` and `--cluster`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate data longer than 30 characters. If at least one datum is truncated, the column name is changed from `Content` to `Content [Truncated]`. Different commands produce different CSV schemas. 
     
 ## Shell Template Language
 
