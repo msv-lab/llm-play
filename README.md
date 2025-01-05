@@ -38,7 +38,7 @@ An LLM can be queried via an argument, a specified prompt file, or stdin:
     llm-play --prompt prompt.md
     llm-play < prompt.md
     
-The argument and the file options are mutually-exclusive. Both take take precedence over the stdin.
+The argument and the file options are mutually-exclusive. They both take precedence over stdin.
 
 In this case, the response is printed on stdout, and can be redirected to a file:
 
