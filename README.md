@@ -118,11 +118,7 @@ By default, the extracted data is saved into "txt" files. The file extension can
             ├── 1.py
             ...
             └── 9.py
-            
-Transformers can be used to export data to a different format, e.g.
-
-    llm-play --map data --output data.csv --transformer __ID__
-            
+           
 
 ### On-the-fly Transformation
 
@@ -249,17 +245,22 @@ Additionally, the predicate will terminate with the zero exit code iff it passes
 
 ## Data Formats
 
-The tool operates three formats:
+The supported data formats are
 
-- Filesystem tree (FS-tree) designed for human redability
-- JSON files designed for storage and sharing
+- Filesystem tree (FS-tree) designed for human readability
+- JSON files designed for easy storage and sharing
 - CSV files for evaluation
 
 The argument of `--output` is treated as a directory path unless it ends with `.json` or `.csv`.
 
 The FS-tree and JSON format are interchangeble. They both cab used as outputs of the LLM sampling command, and inputs and outputs of the `--map` and `--cluster` commands. Only FS-tree and JSON can be updated with `--update`.
 
-CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as one of the supported output formats for `--map` and `--cluster`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate data longer than 30 characters. If at least one datum is truncated, the column name is changed from `Content` to `Content [Truncated]`. Different commands produce different CSV schemas. 
+CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as one of the supported output formats for `--map` and `--cluster`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate data longer than 30 characters. If at least one datum is truncated, the column name is changed from `Content` to `Content [Truncated]`. Different commands produce different CSV schemas.
+
+The identify transformer can be used to convert data between different format, e.g.
+
+    llm-play --map data --output data.json --transformer __ID__
+    llm-play --map data.json --output data.csv --transformer __ID__
     
 ## Shell Template Language
 
