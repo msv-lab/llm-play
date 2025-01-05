@@ -253,11 +253,11 @@ The supported data formats are
 
 The argument of `--output` is treated as a directory path unless it ends with `.json` or `.csv`.
 
-The FS-tree and JSON format are interchangeble. They both cab used as outputs of the LLM sampling command, and inputs and outputs of the `--map` and `--cluster` commands. Only FS-tree and JSON can be updated with `--update`.
+FS-tree and JSON formats are interchangeble. They both can be used as outputs of LLM sampling, and as inputs or outputs of the `--map` and `--cluster` commands. Only FS-tree and JSON can be updated with `--update`.
 
-CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as one of the supported output formats for `--map` and `--cluster`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate data longer than 30 characters. If at least one datum is truncated, the column name is changed from `Content` to `Content [Truncated]`. Different commands produce different CSV schemas.
+CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as an alternative output format for `--map` and `--cluster`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate data longer than 30 characters. If at least one datum is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`. Different commands produce different CSV schemas.
 
-The identify transformer can be used to convert data between different format, e.g.
+The identity transformer can be used to convert data between different formats, e.g.
 
     llm-play --map data --output data.json --transformer __ID__
     llm-play --map data.json --output data.csv --transformer __ID__
