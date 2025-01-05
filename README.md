@@ -56,20 +56,20 @@ To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with
 
     llm-play --prompt prompts/question1.md \
              --model qwen2.5-7b-instruct qwen2.5-coder-7b-instruct \
-             --temperature 0.5 \
+             -t 0.5 \
              -n 10 \
              --output samples
              
 The samples will be stored in a filesystem tree as follows:
 
     samples
-    ├── qwen2.5-7b-instruct_1.0
+    ├── qwen2.5-7b-instruct_0.5
     │   ├── question1_2f73f5f.md
     │   └── question1_2f73f5f
     │       ├── 0_0.md
     │       ...
     │       └── 9_4.md
-    └── qwen2.5-coder-7b-instruct_1.0
+    └── qwen2.5-coder-7b-instruct_0.5
         ├── question1_2f73f5f.md
         └── question1_2f73f5f
             ├── 0_0.md
