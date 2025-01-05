@@ -134,7 +134,7 @@ The option `--code` extracts a code block from Markdown formatting.
 
 ## Partitioning
 
-By default, all responses are partitioned into equivalence classes based their syntactic identity using the relation `__ID__`.
+By default, all responses are partitioned into equivalence classes based on their syntactic identity using the relation `__ID__`.
 
 To group answers into equivalence classes based qwen2.5's judgement, use the following command:
 
