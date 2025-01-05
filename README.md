@@ -212,7 +212,7 @@ This command aligns the class labels between these two distributions w.r.t. the 
 - [Jaccard index](https://en.wikipedia.org/wiki/Jaccard_index) over supports
 - Differences between supports
 
-The difference can be exported with `--output` into either CSV or JSON formats (not a filesystem tree).
+The difference can be exported with `--output` into CSV format.
 
 ## Evaluation
 
