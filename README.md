@@ -181,9 +181,10 @@ To show the distribution of equivalence classes of outputs (across one or more m
 
     llm-play --distribution data
 
-A distribution can be analyzed for a subset of data:
+A distribution can be analyzed for a subset of data, and exported into a CSV file:
 
     llm-play --distribution data/qwen2.5-7b-instruct_1.0/a_2f73f5f
+             --output distribution.csv
     
 This will compute and visualise
 
@@ -195,8 +196,6 @@ Related work on semantic uncertainty:
 - Semantic Uncertainty: Linguistic Invariances for Uncertainty Estimation in Natural Language Generation<br>
   Lorenz Kuhn, Yarin Gal, Sebastian Farquhar<br>
   ICLR 2023
-
-The distribution can be exported with `--output` into either CSV or JSON formats (not a filesystem tree).
     
 Note that `--distribution` does not itself perform any data extraction or partitioning.
 
