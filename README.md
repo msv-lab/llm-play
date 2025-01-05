@@ -64,7 +64,7 @@ To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with
              -n 10 \
              --output samples
              
-Three store types are supported: `filesystem tree`, `csv` and `json`. In above case, the samples will be stored in a filesystem tree as follows (`__unnamed__` is the prompt id, `__unnamed__.md` contains the prompt, `0.md`, ..., `9.md` are the samples):
+Three store types are supported: `filesystem tree`, `json` and `csv`. In above case, the samples will be stored in a filesystem tree as follows (`__unnamed__` is the prompt id, `__unnamed__.md` contains the prompt, `0.md`, ..., `9.md` are the samples):
 
     samples
     ├── qwen2.5-7b-instruct_1.0
@@ -80,17 +80,19 @@ Three store types are supported: `filesystem tree`, `csv` and `json`. In above c
             ...
             └── 9.md
             
-Other formats can be enabled by providing a path that ends with the corresponding extensions: `.csv` or `.json`. For example, specifying `--output samples.csv` will export the samples in CSV format.
+Other formats can be enabled by providing a path that ends with the corresponding extensions: `.json` or `.csv`. For example, specifying `--output samples.csv` will export the samples in CSV format. Note that the CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate data longer than 30 characters. If at least one datum is truncated, the column name is changed from `Content` to `Content [Truncated]`. The JSON encoding is equivalent to the filesystem encoding, and can be loaded back for further analysis.
 
 To query a model with prompts contained in all files matching `*.md` in the current directory, use the command:
 
     llm-play --prompt *.md --output samples
     
-To update an existing store, the `--update` options can be used instead of `--output`:
+When a query is supplied through stdin or as a command-line argument, the prompt is automatically assigned the identifier `__unnamed__`. However, if the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its identifier. In cases where multiple files are provided, ensure that their names are unique to avoid conflicts.
+    
+To update an existing store, the `--update` option should be used instead of `--output`:
     
     llm-play --prompt *.md --update samples
 
-When a query is supplied through stdin or as a command-line argument, the prompt is automatically assigned the identifier `__unnamed__`. However, if the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its identifier. In cases where multiple files are provided, ensure that their names are unique to avoid conflicts.
+In case of collisions, i.e. samples for the same (model, temperature, prompt) tuple already exist in the store, the matching prompt files will be updated, and the old responses are removed. When updating an existing store, maitain the following invariant: unique prompt identifiers correspond to unique prompts across the entire store.
 
 ## Data Transformation
 
@@ -223,7 +225,7 @@ Special evaluation transformers are provided for convenience. To evaluate data b
 
     llm-play --map data --equal Beijing
     
-The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--equivalence` or the default one selected with `-c`.
+The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--equivalence` or the default one selected with `-c`. It will return either `Yes` or `No`.
 
 Evalation can be done for a subset of outputs:
 
@@ -231,17 +233,19 @@ Evalation can be done for a subset of outputs:
     
 ### Predicates
 
-Predicates are one-the-fly query evaluators. For example, this command acts as a predicate over `$CITY`:
+Predicates are special one-the-fly query evaluators. For example, this command acts as a predicate over `$CITY`:
 
     llm-play "Is $CITY the capital of China?" --predicate
 
-It is equivalent to the following (plus, the command will terminate with the zero exit code iff it passes the evaluation):
+It is equivalent to the following:
 
     llm-play "Is $CITY the capital of China? Respond Yes or No." \
               --answer \
               --equal Yes \
               --equivalence __TRIMMED_CASE_INSENSITIVE__ \
-              >/dev/null
+              --quiet
+              
+Additionally, the predicate will terminate with the zero exit code iff it passes the evaluation. Predicates can only be applied to interactive commands with a single model/task/response, and without a specified output.
     
 ## Shell Template Language
 
