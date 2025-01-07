@@ -27,19 +27,23 @@ import tempfile
 import subprocess
 import re
 from collections import deque
+import hashlib
 
 import yaml
 import InquirerPy
 from openai import OpenAI
+from wcwidth import wcwidth, wcswidth
+
 
 VERSION = "0.0.0"
 
 ANSWER_FORMAT_DIRECTIVE = "Wrap the final answer with <answer> </answer>."
-ANSWER_EXTRACTOR = r"sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
+ANSWER_EXTRACTOR = (
+    r"sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
+)
 CODE_EXTRACTOR = r"awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%ESCAPED_DATA_FILE%%"
 
-
-DEFAULT_CONFIG = fr"""
+DEFAULT_CONFIG = rf"""
 default:
   models:
     - qwen2.5-72b-instruct
@@ -117,8 +121,7 @@ equivalences:
     llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: "%%DATA1%%" and "%%DATA2%%"?' --predicate
 """
 
-
-DATA_STREAM_TABLE_HEADER = ['Model', 'Temp.', 'Task', 'Sample', 'Content']
+DATA_STREAM_TABLE_HEADER = ["Model", "Temp.", "Prompt", "Sample", "Content"]
 
 USER_CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".llm_play.yaml")
 
@@ -126,44 +129,47 @@ CSV_TRUNCATE_LENGTH = 30
 
 
 @dataclass
-class Task:
-    id: str
-    prompt: str
+class Prompt:
+    content: str
+    label: str
+    hash: str
 
     @staticmethod
-    def unnamed(prompt):
-        return Task('__unnamed__', prompt)
+    def unlabelled(content):
+        return Prompt.labelled(content, '')
 
-    def is_unnamed(self):
-        return self.id == '__unnamed__'
-
+    @staticmethod
+    def labelled(content, label):
+        output_length = 8
+        shake = hashlib.shake_256(content.encode("utf-8"))
+        return Prompt(content, label, shake.hexdigest(output_length))
 
 @dataclass
 class LLMQuery:
     models: List[str]
     temperature: str
-    tasks: List[Task]
+    prompts: List[Prompt]
     num_samples: int
 
 
 @dataclass
-class StreamItem: 
+class StreamItem:
     model: str
     temperature: str
-    task: Task
+    prompt: Prompt
     sample_id: int
     class_id: int
     content: str
 
 
 def get_provider_by_model(model, config):
-    for m in config['models']:
-        if model == m['name']:
-            return m['provider']
+    for m in config["models"]:
+        if model == m["name"]:
+            return m["provider"]
     raise ValueError(f"no provider for model {model}")
 
 
-class LLMStream:
+class LLMSamples:
     def __init__(self, query, config):
         self.temperature = query.temperature
         self.config = config
@@ -172,18 +178,18 @@ class LLMStream:
         self.cache = deque()
         self.execution_plan = deque()
         for m in query.models:
-            for t in query.tasks:
+            for t in query.prompts:
                 self.execution_plan.append((m, t, query.num_samples))
-        self.size = len(query.models) * len(query.tasks) * query.num_samples
+        self.size = len(query.models) * len(query.prompts) * query.num_samples
 
         max_model_name_len = max(len(m) for m in query.models)
-        max_task_name_len = max(len(t.id) for t in query.tasks)
-        self.table_format = [
-            (max(max_model_name_len, len(DATA_STREAM_TABLE_HEADER[0])), 'l'),
-            (len(DATA_STREAM_TABLE_HEADER[1]), 'r'),
-            (min(max(max_task_name_len, len(DATA_STREAM_TABLE_HEADER[2])), 20), 'l'),
-            (len(DATA_STREAM_TABLE_HEADER[3]), 'r'),
-            (None, 'l'),
+        max_prompt_name_len = max(len(p.label) for p in query.prompts)
+        self._table_format = [
+            (max(max_model_name_len, len(DATA_STREAM_TABLE_HEADER[0])), "l"),
+            (len(DATA_STREAM_TABLE_HEADER[1]), "r"),
+            (min(max(max_prompt_name_len, len(DATA_STREAM_TABLE_HEADER[2])), 20), "l"),
+            (len(DATA_STREAM_TABLE_HEADER[3]), "r"),
+            (None, "l"),
         ]
 
     def __iter__(self):
@@ -192,21 +198,17 @@ class LLMStream:
     def _sample(self, model, prompt, temperature, n):
         provider = get_provider_by_model(model, self.config)
         client = OpenAI(
-            api_key=os.getenv(self.config['providers'][provider]['key_env_variable']),
-            base_url=self.config['providers'][provider]['base_url'],
+            api_key=os.getenv(self.config["providers"][provider]["key_env_variable"]),
+            base_url=self.config["providers"][provider]["base_url"],
         )
-        if self.config['providers'][provider]['support_multiple_samples']:
+        if self.config["providers"][provider]["support_multiple_samples"]:
             completion = client.chat.completions.create(
-                model=model,
-                messages=[{'role': 'user', 'content': prompt}],
-                n=n
+                model=model, messages=[{"role": "user", "content": prompt}], n=n
             )
             return [c.message.content for c in completion.choices]
         else:
             completion = client.chat.completions.create(
-                model=model,
-                messages=[{'role': 'user', 'content': prompt}],
-                n=1
+                model=model, messages=[{"role": "user", "content": prompt}], n=1
             )
             return [completion.choices[0].message.content]
 
@@ -215,29 +217,33 @@ class LLMStream:
             raise StopIteration
         self.current_item_index += 1
         if len(self.cache) == 0:
-            model, task, n = self.execution_plan.pop()
-            samples = self._sample(model, task.prompt, self.temperature, n)
+            model, prompt, n = self.execution_plan.pop()
+            samples = self._sample(model, prompt.content, self.temperature, n)
+            new_entries = []
             for s in samples:
-                self.cache.append((model, task, self.current_sample_index, s))
+                new_entries.append((model, prompt, self.current_sample_index, s))
                 self.current_sample_index += 1
+            new_entries.reverse()
+            self.cache.extend(new_entries)
             if n > len(samples):
-                self.execution_plan.append((model, task, n - len(samples)))
+                self.execution_plan.append((model, prompt, n - len(samples)))
             else:
                 self.current_sample_index = 0
-        model, task, sample_id, sample = self.cache.pop()
+        model, prompt, sample_id, sample = self.cache.pop()
         return StreamItem(
-            model = model,
-            temperature = self.temperature,
-            task = task,
-            sample_id = sample_id,
-            class_id = sample_id,
-            content = sample)
+            model=model,
+            temperature=self.temperature,
+            prompt=prompt,
+            sample_id=sample_id,
+            class_id=sample_id,
+            content=sample,
+        )
 
     def next_batch(self):
         return self.current_index > 0 and len(self.current_sample_index) == 0
 
     def table_format(self):
-        return self.table_format
+        return self._table_format
 
     def table_header(self):
         return DATA_STREAM_TABLE_HEADER
@@ -249,8 +255,8 @@ class LLMStream:
 def stream_response_to_stdout(prompt, model, temperature, config):
     provider = get_provider_by_model(model, config)
     client = OpenAI(
-        api_key=os.getenv(config['providers'][provider]['key_env_variable']),
-        base_url=config['providers'][provider]['base_url'],
+        api_key=os.getenv(config["providers"][provider]["key_env_variable"]),
+        base_url=config["providers"][provider]["base_url"],
     )
     stream = client.chat.completions.create(
         model=model,
@@ -272,11 +278,11 @@ class JSONStream:
         "model_id": {
             "temperature": {
             }
-            
         },
         ...
     }
     """
+
     def __init__(self, data):
         self.current_item_index = 0
         self.current_sample_index = 0
@@ -284,7 +290,7 @@ class JSONStream:
         self.size = 0
 
         max_model_name_len = max(len(m) for m in query.models)
-        max_task_name_len = max(len(t.id) for t in query.tasks)
+        max_prompt_name_len = max(len(p.label) for p in query.prompt)
         self.table_format = 0
 
     def __iter__(self):
@@ -295,23 +301,24 @@ class JSONStream:
             raise StopIteration
         self.current_item_index += 1
         if len(self.cache) == 0:
-            model, task, n = self.execution_plan.pop()
-            samples = self._sample(model, task.prompt, self.temperature, n)
+            model, prompt, n = self.execution_plan.pop()
+            samples = self._sample(model, prompt.prompt, self.temperature, n)
             for s in samples:
-                self.cache.append((model, task, self.current_sample_index, s))
+                self.cache.append((model, prompt, self.current_sample_index, s))
                 self.current_sample_index += 1
             if n > len(samples):
-                self.execution_plan.append((model, task, n - len(samples)))
+                self.execution_plan.append((model, prompt, n - len(samples)))
             else:
                 self.current_sample_index = 0
-        model, task, sample_id, sample = self.cache.pop()
+        model, prompt, sample_id, sample = self.cache.pop()
         return StreamItem(
-            model = model,
-            temperature = self.temperature,
-            task = task,
-            sample_id = sample_id,
-            class_id = sample_id,
-            content = sample)
+            model=model,
+            temperature=self.temperature,
+            prompt=prompt,
+            sample_id=sample_id,
+            class_id=sample_id,
+            content=sample,
+        )
 
     def next_batch(self):
         return self.current_index > 0 and len(self.current_sample_index) == 0
@@ -324,7 +331,6 @@ class JSONStream:
 
     def __len__(self):
         return self.size
-        
 
 
 def recreate_directory(path):
@@ -342,32 +348,38 @@ def to_single_line(text):
 
 def execute_batch_jobs(query, settings, output, config):
     recreate_directory(output)
-    stream = LLMStream(query, config)
-    if len(stream) > 1:
-        #TODO: check if terminal
-        printer = TablePrinter(stream.table_format(), DATA_STREAM_TABLE_HEADER)
-    for i in stream:
+    samples = LLMSamples(query, config)
+    if len(samples) > 1:
+        # TODO: check if terminal
+        printer = TablePrinter(samples.table_format(), samples.table_header())
+    for i in samples:
         model_path = os.path.join(output, f"{i.model}_{i.temperature}")
         os.makedirs(model_path, exist_ok=True)
-        prompt_file = os.path.join(model_path, f"{i.task.id}.md")
+        prompt_file = os.path.join(model_path, f"{i.prompt.label}_{i.prompt.hash}.md")
         if not os.path.exists(prompt_file):
             with open(prompt_file, "w") as file:
-                file.write(i.task.prompt)
-        task_path = os.path.join(model_path, i.task.id)
-        os.makedirs(task_path, exist_ok=True)
-        if settings['function'] != '__ID__':
-            result = transform(i.content, i.task, settings['function'])
+                file.write(i.prompt.content)
+        responses_path = os.path.join(model_path, f"{i.prompt.label}_{i.prompt.hash}")
+        os.makedirs(responses_path, exist_ok=True)
+        if settings["function"] != "__ID__":
+            result = transform(i.content, i.prompt, settings["function"])
         else:
             result = i.content
-        with open(os.path.join(task_path, f"{i.sample_id}.md"), "w") as file:
+        with open(os.path.join(responses_path, f"{i.sample_id}.md"), "w") as file:
             file.write(result)
-            if len(stream) > 1:
-                row = (i.model, i.temperature, i.task.id, i.sample_id, to_single_line(result))
+            if len(samples) > 1:
+                row = (
+                    i.model,
+                    i.temperature,
+                    i.prompt.label,
+                    i.sample_id,
+                    to_single_line(result),
+                )
                 printer.print_row(row)
 
 
-def instantiate_shell_template(t, task, prompt_file, data, data_files):
-    assert(len(data) == len(data_files))
+def instantiate_shell_template(t, prompt, prompt_file, data, data_files):
+    assert len(data) == len(data_files)
 
     def render(value, escape=False):
         return shlex.quote(value) if escape and value is not None else value
@@ -382,26 +394,40 @@ def instantiate_shell_template(t, task, prompt_file, data, data_files):
             t = t.replace(f"%%DATA{i}%%", render(data[i - 1]))
             t = t.replace(f"%%ESCAPED_DATA{i}%%", render(data[i - 1], escape=True))
             t = t.replace(f"%%DATA_FILE{i}%%", render(data_files[i - 1]))
-            t = t.replace(f"%%ESCAPED_DATA_FILE{i}%%", render(data_files[i - 1], escape=True))
-    t = t.replace(f"%%PROMPT%%", render(task.prompt, 0))
-    t = t.replace(f"%%ESCAPED_PROMPT%%", render(task.prompt, escape=True))
+            t = t.replace(
+                f"%%ESCAPED_DATA_FILE{i}%%", render(data_files[i - 1], escape=True)
+            )
+    t = t.replace(f"%%PROMPT%%", render(prompt.content, 0))
+    t = t.replace(f"%%ESCAPED_PROMPT%%", render(prompt.content, escape=True))
     t = t.replace(f"%%PROMPT_FILE%%", render(prompt_file))
     t = t.replace(f"%%ESCAPED_PROMPT_FILE%%", render(prompt_file, escape=True))
-    t = t.replace(f"%%TASK_ID%%", render(task.id))
-    t = t.replace(f"%%ESCAPED_TASK_ID%%", render(task.id, escape=True))
+    t = t.replace(f"%%PROMPT_LABEL%%", render(prompt.label))
+    t = t.replace(f"%%ESCAPED_PROMPT_LABEL%%", render(prompt.label, escape=True))
 
     return t
 
 
-def transform(sample, task, function):
+def transform(sample, prompt, function):
     with tempfile.NamedTemporaryFile() as prompt_file:
-        prompt_file.write(task.prompt.encode())
+        prompt_file.write(prompt.content.encode())
         prompt_file.flush()
         with tempfile.NamedTemporaryFile() as data_file:
             data_file.write(sample.encode())
             data_file.flush()
-            cmd = instantiate_shell_template(function, task, prompt_file.name, data=[sample], data_files=[data_file.name])
-            result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            cmd = instantiate_shell_template(
+                function,
+                prompt,
+                prompt_file.name,
+                data=[sample],
+                data_files=[data_file.name],
+            )
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
             return result.stdout
 
 
@@ -418,88 +444,147 @@ class TablePrinter:
 
         fixed_widths = [w[0] for w in column_widths if w[0] is not None]
         fixed_total = sum(fixed_widths) + (num_columns - 1) * 3
-        flexible_columns = column_widths.count((None, 'l')) + column_widths.count((None, 'r'))
-        #TODO what if overflow?
+        flexible_columns = column_widths.count((None, "l")) + column_widths.count(
+            (None, "r")
+        )
+        # TODO what if overflow?
         if flexible_columns > 0:
             available_width = max(terminal_width - fixed_total, 0)
             flexible_width = available_width // flexible_columns
-            column_widths = [w if w[0] is not None else (flexible_width, w[1]) for w in column_widths]
+            column_widths = [
+                w if w[0] is not None else (flexible_width, w[1]) for w in column_widths
+            ]
         self.column_widths = column_widths
         self.print_row(headers)
         sep = []
-        for (w, _) in column_widths:
-            sep.append(u'\u2500'*w)
-        print(("" + u'\u2500' +  u'\u253C' + u'\u2500').join(sep))
+        for w, _ in column_widths:
+            sep.append("\u2500" * w)
+        print(("" + "\u2500" + "\u253C" + "\u2500").join(sep))
 
     def _truncate(self, content, width):
-        if len(content) > width:
-            return content[:width - 3] + '...'  # Truncate and add ellipsis
+        if wcswidth(content) > width:
+            current_width = 0
+            result = []
+            for char in content:
+                char_width = wcwidth(char)
+                if char_width == -1:
+                    continue
+                if current_width + char_width > width - len("..."):
+                    break
+                current_width += char_width
+                result.append(char)
+            return ''.join(result) + "..."
         return content
 
+    def _wc_rjust(self, text, length, padding=' '):
+        return padding * max(0, (length - wcswidth(text))) + text
+
+    def _wc_ljust(self, text, length, padding=' '):
+        return text + padding * max(0, (length - wcswidth(text)))
+
+    # TODO: test with narrow screens and empty responses
     def print_row(self, row):
         formatted_row = []
         for i, cell in enumerate(row):
             col_width, alignment = self.column_widths[i]
-            cell_content = str(cell).splitlines()[0]
-            if alignment == 'l':
-                formatted_row.append(self._truncate(cell_content, col_width).ljust(col_width))
+            if alignment == "l":
+                formatted_row.append(self._wc_ljust(self._truncate(str(cell), col_width), col_width))
             else:
-                formatted_row.append(self._truncate(cell_content, col_width).rjust(col_width))
-        print((" " + u'\u2502' + " ").join(formatted_row))
+                formatted_row.append(self._wc_rjust(self._truncate(str(cell), col_width), col_width))
+        print((" " + "\u2502" + " ").join(formatted_row))
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="llm-play interface")
-    parser.add_argument("query", nargs='?', type=str, help="Query string")
-    parser.add_argument("--prompt", nargs='+', type=str, help="Prompt files")
+    parser.add_argument("query", nargs="?", type=str, help="Query string")
+    parser.add_argument("--prompt", nargs="+", type=str, help="Prompt files")
     parser.add_argument("--output", type=str, help="Output FS-tree/JSON/CSV")
     parser.add_argument("--update", type=str, help="FS-tree/JSON to update")
-    parser.add_argument("--model", nargs='+', type=str, help="List of models to query")
-    parser.add_argument("-t", "--temperature", type=float, help="Temperature for model generation")
-    parser.add_argument("-n", "--num-samples", type=int, help="Number of samples to generate")
+    parser.add_argument("--model", nargs="+", type=str, help="List of models to query")
+    parser.add_argument(
+        "-t", "--temperature", type=float, help="Temperature for model generation"
+    )
+    parser.add_argument(
+        "-n", "--num-samples", type=int, help="Number of samples to generate"
+    )
     parser.add_argument("--map", type=str, help="Transform given data")
-    parser.add_argument("--function", type=str, help="Data transformation shell command")
-    parser.add_argument("--extension", type=str, help="File extension for transformed data")
+    parser.add_argument(
+        "--function", type=str, help="Data transformation shell command"
+    )
+    parser.add_argument(
+        "--extension", type=str, help="File extension for transformed data"
+    )
     parser.add_argument("--answer", action="store_true", help="Extract answer")
     parser.add_argument("--code", action="store_true", help="Extract code")
     parser.add_argument("--distribution", type=str, help="Show distribution of samples")
-    parser.add_argument("--partition", type=str, help="Partition data into equivalence classes")
-    parser.add_argument("--equivalence", type=str, help="Equivalence relation shell command")
-    parser.add_argument("--equal", type=str, help="Check equivalence of data to the specified value")
-    parser.add_argument("--predicate", action="store_true", help="Evaluate truthfulness of the predicate")
-    parser.add_argument("--quiet", action="store_true", help="Do not print data on stdout")
+    parser.add_argument(
+        "--partition", type=str, help="Partition data into equivalence classes"
+    )
+    parser.add_argument(
+        "--equivalence", type=str, help="Equivalence relation shell command"
+    )
+    parser.add_argument(
+        "--equal", type=str, help="Check equivalence of data to the specified value"
+    )
+    parser.add_argument(
+        "--predicate",
+        action="store_true",
+        help="Evaluate truthfulness of the predicate",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="Do not print data on stdout"
+    )
     parser.add_argument("--debug", action="store_true", help="Print logs on stderr")
     parser.add_argument("--version", action="store_true", help="Print version")
-    parser.add_argument("-c", "--configure", action="store_true", help="Set default options")
+    parser.add_argument(
+        "-c", "--configure", action="store_true", help="Set default options"
+    )
     return parser.parse_args()
 
 
 def validate_arguments(arguments):
-    if (((arguments.num_samples and arguments.num_samples > 1) or
-         (arguments.model and len(arguments.model) > 1) or
-         (arguments.prompt and len(arguments.prompt) > 1)) and
-        not arguments.output):
-        print("for multiple samples/models/prompts, the output directory needs to be specified", file=sys.stderr)
+    if (
+        (arguments.num_samples and arguments.num_samples > 1)
+        or (arguments.model and len(arguments.model) > 1)
+        or (arguments.prompt and len(arguments.prompt) > 1)
+    ) and not arguments.output:
+        print(
+            "for multiple samples/models/prompts, the output directory needs to be specified",
+            file=sys.stderr,
+        )
         exit(1)
 
-    if sum([bool(arguments.query),
-            bool(arguments.prompt),
-            bool(arguments.distribution),
-            bool(arguments.map)]) > 1:
-        print("choose only one of (1) query string, (2) prompt files, (3) sample distribution, (4) data transformation", file=sys.stderr)
+    if (
+        sum(
+            [
+                bool(arguments.query),
+                bool(arguments.prompt),
+                bool(arguments.distribution),
+                bool(arguments.map),
+            ]
+        )
+        > 1
+    ):
+        print(
+            "choose only one of (1) query string, (2) prompt files, (3) sample distribution, (4) data transformation",
+            file=sys.stderr,
+        )
         exit(1)
 
-    if ((arguments.answer or arguments.code) and arguments.function):
-        print("the answer/code options cannot be used with a custom function", file=sys.stderr)
+    if (arguments.answer or arguments.code) and arguments.function:
+        print(
+            "the answer/code options cannot be used with a custom function",
+            file=sys.stderr,
+        )
         exit(1)
 
-    if (arguments.code and arguments.answer):
+    if arguments.code and arguments.answer:
         print("the code and the answer options are mutually exclusive", file=sys.stderr)
         exit(1)
 
 
 def process_prompt_files(file_list):
-    tasks = []
+    prompts = []
     seen_labels = set()
 
     for file_path in file_list:
@@ -509,11 +594,11 @@ def process_prompt_files(file_list):
             print(f"duplicate prompt label: '{label}'", file=sys.stderr)
             sys.exit(1)
         seen_labels.add(label)
-        with open(file_path, 'r') as file:
+        with open(file_path, "r") as file:
             content = file.read()
-            tasks.append(Task(label, content))
+            prompts.append(Prompt.labelled(content, label))
 
-    return tasks
+    return prompts
 
 
 @dataclass
@@ -529,10 +614,16 @@ def load_data(path_query):
         # Returns list of (task id, prompt file path, sample dir)
         result = []
         entries = os.listdir(path)
-        md_files = { os.path.splitext(entry)[0]: os.path.join(path, entry)
-                     for entry in entries if entry.endswith('.md') }
-        directories = { entry: os.path.join(path, entry)
-                        for entry in entries if os.path.isdir(os.path.join(path, entry)) }
+        md_files = {
+            os.path.splitext(entry)[0]: os.path.join(path, entry)
+            for entry in entries
+            if entry.endswith(".md")
+        }
+        directories = {
+            entry: os.path.join(path, entry)
+            for entry in entries
+            if os.path.isdir(os.path.join(path, entry))
+        }
         for name, md_file_path in md_files.items():
             if name in directories:
                 result.append((name, md_file_path, directories[name]))
@@ -543,8 +634,8 @@ def load_data(path_query):
         for file_name in os.listdir(sample_dir):
             full_path = os.path.join(sample_dir, file_name)
             if os.path.isfile(full_path):
-                file_parts = file_name.rsplit('.', 1)
-                name_parts = file_parts[0].split('_')
+                file_parts = file_name.rsplit(".", 1)
+                name_parts = file_parts[0].split("_")
                 sample_id = name_parts[0]
                 class_id = name_parts[-1] if len(name_parts) > 1 else None
                 sample_files.append((sample_id, class_id, full_path))
@@ -556,30 +647,28 @@ def load_data(path_query):
         #          task_id -> prompt)
         samples = dict()
         prompts = dict()
-        for (task_id, md_file_path, sample_dir) in data:
-            with open(md_file_path, 'r') as f:
+        for task_id, md_file_path, sample_dir in data:
+            with open(md_file_path, "r") as f:
                 prompts[task_id] = f.read()
             samples[task_id] = collect_sample_files(sample_dir)
         return (samples, prompts)
 
     def pick_directory(path):
         subdirectories = [
-            d for d in os.listdir(path) 
-            if os.path.isdir(os.path.join(path, d))
+            d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))
         ]
         if not subdirectories:
             return None
         else:
-            return os.path.join(path,subdirectories[0])
+            return os.path.join(path, subdirectories[0])
 
     data = collect_sample_dirs(path_query)
     if len(data) > 0:
         # this is a model directory
         samples, prompts = load_prompts_and_samples(data)
         last_dir = os.path.basename(os.path.normpath(path_query))
-        model_name, temperature = tuple(last_dir.rsplit('_', 1))
-        return DataStore(prompts=prompts,
-                         samples={(model_name, temperature): samples})
+        model_name, temperature = tuple(last_dir.rsplit("_", 1))
+        return DataStore(prompts=prompts, samples={(model_name, temperature): samples})
     else:
         # this is either a top-level directory, or a sample directory
         some_dir = pick_directory(path_query)
@@ -587,19 +676,19 @@ def load_data(path_query):
             data = collect_sample_dirs(some_dir)
             if len(data) > 0:
                 subdirectories = [
-                    d for d in os.listdir(path_query) 
+                    d
+                    for d in os.listdir(path_query)
                     if os.path.isdir(os.path.join(path, d))
                 ]
                 all_samples = dict()
                 prompts = dict()
-                for model_dir in subdirectories:                    
+                for model_dir in subdirectories:
                     data = collect_sample_dirs(os.path.join(path_query, model_dir))
-                    assert(len(data) > 0)
-                    model_name, temperature = tuple(last_dir.rsplit('_', 1))
+                    assert len(data) > 0
+                    model_name, temperature = tuple(last_dir.rsplit("_", 1))
                     samples, prompts = load_prompts_and_samples(data)
                     all_samples[(model_name, temperature)] = samples
-                return DataStore(prompts=prompts,
-                                 samples=all_samples)
+                return DataStore(prompts=prompts, samples=all_samples)
             else:
                 # we assume there should be no subdirectories in the sample directory:
                 print("failed to interpret data path", file=sys.stderr)
@@ -609,55 +698,58 @@ def load_data(path_query):
             task_id = os.path.basename(os.path.normpath(path_query))
             parent_dir = os.path.dirname(os.path.normpath(path_query))
             model_temp = os.path.basename(os.path.normpath(parent_dir))
-            model_name, temperature = tuple(model_temp.rsplit('_', 1))
+            model_name, temperature = tuple(model_temp.rsplit("_", 1))
             data = [(task_id, os.path.join(parent_dir, f"/{task_id}.md"), path_query)]
             samples, prompts = load_prompts_and_samples(data)
-            return DataStore(prompts=prompts,
-                             samples={(model_name, temperature): samples})
+            return DataStore(
+                prompts=prompts, samples={(model_name, temperature): samples}
+            )
 
 
 def configure(config):
     model_choices = []
-    for m in [entry['name'] for entry in config['models']]:
-        if m in config['default']['models']:
+    for m in [entry["name"] for entry in config["models"]]:
+        if m in config["default"]["models"]:
             model_choices.append(InquirerPy.base.Choice(m, enabled=True))
         else:
-            model_choices.append(InquirerPy.base.Choice(m, enabled=False))            
-    selected = InquirerPy.prompt([
+            model_choices.append(InquirerPy.base.Choice(m, enabled=False))
+    selected = InquirerPy.prompt(
+        [
             {
                 "type": "checkbox",
                 "name": "models",
                 "message": "Models:",
                 "choices": model_choices,
                 "validate": lambda result: len(result) >= 1,
-                "invalid_message": "should be at least 1 selection"
+                "invalid_message": "should be at least 1 selection",
             },
             {
                 "type": "input",
                 "name": "temperature",
                 "message": "Sampling temperature:",
-                "default": str(config['default']['temperature'])
+                "default": str(config["default"]["temperature"]),
             },
             {
                 "type": "list",
                 "name": "function",
                 "message": "Function for --map:",
-                "choices": config['functions'],
-                "default": config['default']['function']
+                "choices": config["functions"],
+                "default": config["default"]["function"],
             },
             {
                 "type": "list",
                 "name": "equivalence",
                 "message": "Relation for --partition/--diff/--equal:",
-                "choices": config['equivalences'],
-                "default": config['default']['equivalence']
+                "choices": config["equivalences"],
+                "default": config["default"]["equivalence"],
             },
-    ])
+        ]
+    )
     if selected:
-        config['default'] = selected
-    with open(USER_CONFIG_FILE, 'w') as f:
+        config["default"] = selected
+    with open(USER_CONFIG_FILE, "w") as f:
         yaml.dump(config, f, width=float("inf"))
-    
+
 
 def main():
     arguments = parse_args()
@@ -665,60 +757,69 @@ def main():
     if arguments.version:
         print(VERSION)
         exit(0)
-    
+
     validate_arguments(arguments)
-    
+
     if os.path.isfile(USER_CONFIG_FILE):
-        with open(USER_CONFIG_FILE, 'r') as file:
+        with open(USER_CONFIG_FILE, "r") as file:
             config = yaml.safe_load(file)
     else:
         config = yaml.safe_load(DEFAULT_CONFIG)
-    
+
     if arguments.configure:
         configure(config)
         exit(0)
 
     if arguments.query:
-        tasks = [Task.unnamed(arguments.query)]
-    elif (not arguments.prompt and not arguments.query):
-        tasks = [Task.unnamed(sys.stdin.read())]
+        prompts = [Prompt.unlabelled(arguments.query)]
+    elif not arguments.prompt and not arguments.query:
+        prompts = [Prompt.unlabelled(sys.stdin.read())]
     else:
-        tasks = process_prompt_files(arguments.prompt)
+        prompts = process_prompt_files(arguments.prompt)
 
     settings = dict()
 
     if arguments.function:
-        settings['function'] = arguments.function
+        settings["function"] = arguments.function
     else:
-        settings['function'] = config['default']['function']
+        settings["function"] = config["default"]["function"]
 
     if arguments.answer:
-        settings['function'] = ANSWER_EXTRACTOR
-        new_tasks = []
-        for t in tasks:
-            new_tasks.append(Task(t.id, t.prompt + " " + ANSWER_FORMAT_DIRECTIVE))
-        tasks = new_tasks
+        settings["function"] = ANSWER_EXTRACTOR
+        new_prompts = []
+        for p in prompts:
+            new_prompts.append(Prompts.labelled(p.concent + " " + ANSWER_FORMAT_DIRECTIVE, p.label))
+        prompts = new_prompts
 
     if arguments.code:
-        settings['function'] = CODE_EXTRACTOR
+        settings["function"] = CODE_EXTRACTOR
 
     query = LLMQuery(
-        models = arguments.model if arguments.model else config['default']['models'],
-        temperature = str(arguments.temperature) if arguments.temperature else config['default']['temperature'],
-        num_samples = arguments.num_samples if arguments.num_samples else 1,
-        tasks = tasks
+        models=arguments.model if arguments.model else config["default"]["models"],
+        temperature=(
+            str(arguments.temperature)
+            if arguments.temperature
+            else config["default"]["temperature"]
+        ),
+        num_samples=arguments.num_samples if arguments.num_samples else 1,
+        prompts=prompts,
     )
 
     if arguments.map:
         print(load_data(arguments.map))
         exit(1)
 
-    if len(query.tasks) * len(query.models) * query.num_samples == 1 and not arguments.output:
-        if settings['function'] == '__ID__':
-            stream_response_to_stdout(tasks[0].prompt, query.models[0], query.temperature, config)
+    if (
+        len(query.prompts) * len(query.models) * query.num_samples == 1
+        and not arguments.output
+    ):
+        if settings["function"] == "__ID__":
+            stream_response_to_stdout(
+                prompts[0].prompt, query.models[0], query.temperature, config
+            )
         else:
-            i = next(LLMStream(query, config))
-            answer = transform(i.content, i.task, settings['function'])
+            i = next(LLMSamples(query, config))
+            answer = transform(i.content, i.prompt, settings["function"])
             print(answer, end="")
             if os.isatty(sys.stdout.fileno()):
                 print()

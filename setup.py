@@ -10,7 +10,7 @@ setup(
         'anthropic',
         'openai',
         'InquirerPy',
-        'tqdm'
+        'wcwidth'
     ],
     entry_points={
         'console_scripts': [
