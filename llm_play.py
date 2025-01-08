@@ -121,8 +121,6 @@ equivalences:
     llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: "%%DATA1%%" and "%%DATA2%%"?' --predicate
 """
 
-DATA_STREAM_TABLE_HEADER = ["Model", "Temp.", "Prompt", "Sample", "Content"]
-
 USER_CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".llm_play.yaml")
 
 CSV_TRUNCATE_LENGTH = 30
@@ -141,8 +139,9 @@ class Prompt:
     @staticmethod
     def labelled(content, label):
         output_length = 8
-        shake = hashlib.shake_256(content.encode("utf-8"))
+        shake = hashlib.shake_128(content.encode("utf-8"))
         return Prompt(content, label, shake.hexdigest(output_length))
+
 
 @dataclass
 class LLMQuery:
@@ -185,11 +184,13 @@ class LLMSamples:
         max_model_name_len = max(len(m) for m in query.models)
         max_prompt_name_len = max(len(p.label) for p in query.prompts)
         self._table_format = [
-            (max(max_model_name_len, len(DATA_STREAM_TABLE_HEADER[0])), "l"),
-            (len(DATA_STREAM_TABLE_HEADER[1]), "r"),
-            (min(max(max_prompt_name_len, len(DATA_STREAM_TABLE_HEADER[2])), 20), "l"),
-            (len(DATA_STREAM_TABLE_HEADER[3]), "r"),
-            (None, "l"),
+            ("Model", max(max_model_name_len, len("Model")), "l"),
+            ("Temp.", len("Temp."), "r"),
+            ("Label", min(max(max_prompt_name_len, len("Label")), 20), "l"),
+            ("Hash", max(len("Hash"), 10), "l"),
+            ("Sample", len("Sample"), "r"),
+            ("Class", len("Class"), "r"),
+            ("Content", None, "l"),
         ]
 
     def __iter__(self):
@@ -244,9 +245,6 @@ class LLMSamples:
 
     def table_format(self):
         return self._table_format
-
-    def table_header(self):
-        return DATA_STREAM_TABLE_HEADER
 
     def __len__(self):
         return self.size
@@ -326,9 +324,6 @@ class JSONStream:
     def table_format(self):
         return self.table_format
 
-    def table_header(self):
-        return DATA_STREAM_TABLE_HEADER
-
     def __len__(self):
         return self.size
 
@@ -351,7 +346,7 @@ def execute_batch_jobs(query, settings, output, config):
     samples = LLMSamples(query, config)
     if len(samples) > 1:
         # TODO: check if terminal
-        printer = TablePrinter(samples.table_format(), samples.table_header())
+        printer = TablePrinter(samples.table_format())
     for i in samples:
         model_path = os.path.join(output, f"{i.model}_{i.temperature}")
         os.makedirs(model_path, exist_ok=True)
@@ -372,7 +367,9 @@ def execute_batch_jobs(query, settings, output, config):
                     i.model,
                     i.temperature,
                     i.prompt.label,
+                    i.prompt.hash,
                     i.sample_id,
+                    i.class_id,
                     to_single_line(result),
                 )
                 printer.print_row(row)
@@ -433,33 +430,32 @@ def transform(sample, prompt, function):
 
 class TablePrinter:
 
-    def __init__(self, column_widths, headers):
-        """column_widths is a list of max widths for columns and
-        alignment options ('l' or 'r'). If a column width is None, the
-        column will auto-adjust to fill the terminal width.
+    def __init__(self, column_specs):
+        """column_specs is a list of headers, max widths for columns
+        and alignment options ('l' or 'r'). If a column width is None,
+        the column will auto-adjust to fill the terminal width.
 
         """
         terminal_width = shutil.get_terminal_size((80, 20)).columns
-        num_columns = len(column_widths)
+        num_columns = len(column_specs)
 
-        fixed_widths = [w[0] for w in column_widths if w[0] is not None]
+        fixed_widths = [w[1] for w in column_specs if w[1] is not None]
         fixed_total = sum(fixed_widths) + (num_columns - 1) * 3
-        flexible_columns = column_widths.count((None, "l")) + column_widths.count(
-            (None, "r")
-        )
+        flexible_columns = len([c for c in column_specs if c[1] is None])
         # TODO what if overflow?
         if flexible_columns > 0:
             available_width = max(terminal_width - fixed_total, 0)
             flexible_width = available_width // flexible_columns
-            column_widths = [
-                w if w[0] is not None else (flexible_width, w[1]) for w in column_widths
+            column_specs = [
+                c if c[1] is not None else (c[0], flexible_width, c[2]) for c in column_specs
             ]
-        self.column_widths = column_widths
+        self.column_specs = column_specs
+        headers = [c[0] for c in column_specs]
         self.print_row(headers)
         sep = []
-        for w, _ in column_widths:
+        for _, w, _ in column_specs:
             sep.append("\u2500" * w)
-        print(("" + "\u2500" + "\u253C" + "\u2500").join(sep))
+        print(("\u2500" + "\u253C" + "\u2500").join(sep))
 
     def _truncate(self, content, width):
         if wcswidth(content) > width:
@@ -486,7 +482,7 @@ class TablePrinter:
     def print_row(self, row):
         formatted_row = []
         for i, cell in enumerate(row):
-            col_width, alignment = self.column_widths[i]
+            _, col_width, alignment = self.column_specs[i]
             if alignment == "l":
                 formatted_row.append(self._wc_ljust(self._truncate(str(cell), col_width), col_width))
             else:

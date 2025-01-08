@@ -37,7 +37,7 @@ An LLM can be queried via an argument, a specified prompt file, or stdin:
     llm-play "What is the capital of China?"
     llm-play --prompt prompt.md
     llm-play < prompt.md
-    
+
 The argument and the file options are mutually-exclusive. They both take precedence over stdin.
 
 In this case, the response is printed on stdout, and can be redirected to a file:
@@ -52,42 +52,54 @@ Command-line options take precedence over the default settings.
 
 ## Batch Processing
 
-To query two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, sample 10 responses, and save the results into the directory `samples`, use the command:
+To sample 10 responses from two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, and save the results into the directory `samples`, use the command:
 
     llm-play --prompt prompts/question1.md \
              --model qwen2.5-7b-instruct qwen2.5-coder-7b-instruct \
              -t 0.5 \
              -n 10 \
              --output samples
-             
+
 The samples will be stored in a filesystem tree as follows:
 
     samples
     ├── qwen2.5-7b-instruct_0.5
-    │   ├── question1_2f73f5f.md
-    │   └── question1_2f73f5f
+    │   ├── question1_4ae91f5bd6090fb6.md
+    │   └── question1_4ae91f5bd6090fb6
     │       ├── 0_0.md
     │       ...
-    │       └── 9_4.md
+    │       └── 9_9.md
     └── qwen2.5-coder-7b-instruct_0.5
-        ├── question1_2f73f5f.md
-        └── question1_2f73f5f
+        ├── question1_4ae91f5bd6090fb6.md
+        └── question1_4ae91f5bd6090fb6
             ├── 0_0.md
             ...
-            └── 9_7.md
-            
-In this tree, `question1` is the prompt label, `2f73f5f` is its truncated SHA1 hash, `question1_2f73f5f.md` contains the prompt. Prompts with repeating hashes are skipped. `0_0.md`, ..., `9_4.md` are the samples. In `5_3.md`, `5` is the sample identifier, and `3` is the identifier of its equivalence class. Please see [Partitioning](#partitioning) for details.
-            
+            └── 9_9.md
+
+In this tree, `question1` is the prompt label, `4ae91f5bd6090fb6` is its SHAKE128 length=8 hash, `question1_4ae91f5bd6090fb6.md` contains the prompt. Prompts with repeating hashes are skipped. `0_0.md`, ..., `9_4.md` are the samples. In `5_3.md`, `5` is the sample identifier, and `3` is the identifier of its equivalence class. Please see [Partitioning](#partitioning) for details.
+
+Responses, truncated to fill the width of the terminal, will also be printed on stdout:
+
+    Model                │ Temp. │ Label     │ Hash       │ Sample │ Class │ Content
+    ─────────────────────┼───────┼───────────┼────────────┼────────┼───────┼────────
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      0 │     0 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      1 │     1 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      2 │     2 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      3 │     3 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      4 │     4 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      5 │     5 │ "It ...
+    ...
+
 The data can also be stored in CSV and JSON formats. Please see [Data Formats](#data-formats) for details.
 
 To query a model with prompts contained in all files matching `*.md` in the current directory, use the command:
 
     llm-play --prompt *.md --output samples
-    
+
 If the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its label. When a query is supplied through stdin or as a command-line argument, the label is empty.
-    
+
 To update an existing store, the `--update` option should be used instead of `--output`:
-    
+
     llm-play --prompt *.md --update samples
 
 In case of collisions, i.e. samples for the same (model, temperature, prompt) tuple already exist in the store, the prompt files with matching hashes will be updated, and the old responses are removed.
@@ -110,8 +122,8 @@ By default, the extracted data is saved into "txt" files. The file extension can
 
     extracted
     └── qwen2.5-7b-instruct_1.0
-        ├── _2f73f5f.md
-        └── _2f73f5f
+        ├── _4ae91f5bd6090fb6.md
+        └── _4ae91f5bd6090fb6
             ├── 0_0.py
             ├── 1_1.py
             ...
@@ -127,9 +139,9 @@ Data can be extracted on-the-fly while querying LLMs if `--function` is explicit
 There are built-in convenience functions to simplify extracting answers or code. The option `--answer` automatically augment the prompt and apply the necessary transformation to extract the relevant parts of the response:
 
     llm-play "What is the capital of China?" --answer
-    
+
 The option `--code` extracts a code block from Markdown formatting.
-    
+
     llm-play "Write a Python function f(n: int) -> int that computes the n-th Catalan number" --code
 
 ## Partitioning
@@ -139,35 +151,35 @@ By default, all responses are partitioned into equivalence classes based on thei
 To group answers into equivalence classes based qwen2.5's judgement, use the following command:
 
     llm-play --partition data \
-             --equivalence "llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%CONDENSED_DATA1%%\" and \"%%CONDENSED_DATA2%%\"?' --predicate" \ 
+             --equivalence "llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%CONDENSED_DATA1%%\" and \"%%CONDENSED_DATA2%%\"?' --predicate" \
              --output classes
-             
+
 Paritioning can be performed for a subset of data:
 
-    llm-play --partition data/qwen2.5-7b-instruct_1.0/a_2f73f5f \
+    llm-play --partition data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
              --equivalence "$EQUIVALENCE" \
              --output classes
-    
+
 When using the filesystem tree format, the equivalence class identifiers will be added to the end of output file names, after the underscore:
 
     classes
     └── qwen2.5-7b-instruct_1.0
-        ├── _69a3a31.md
-        └── _69a3a31
+        ├── _4ae91f5bd6090fb6.md
+        └── _4ae91f5bd6090fb6
             ├── 0_0.md
             ├── 1_0.md
             ...
             └── 9_3.md
-            
+
 The class identifiers across multiple directories are not consistent.
 
-This equivalence is defined via a shell command that exits with the zero status code when two answers are equivalent. The classes are computed using the [disjoint-set algorithm](https://en.wikipedia.org/wiki/Disjoint-set_data_structure).
+This equivalence is defined via a shell command that exits with the zero status code when two answers are equivalent. The classes are computed using [disjoint-set](https://en.wikipedia.org/wiki/Disjoint-set_data_structure).
 
 Equivalence relations can be composed by repeated partitioning:
 
     llm-play --partition data --equivalence "$EQUIVALENCE1" --output classes1
     llm-play --partition classes1 --equivalence "$EQUIVALENCE2" --output classes2
-    
+
 The equivalence relation can be configured:
 
 - Using the `-c` option to select a predefined equivalence command.
@@ -183,9 +195,9 @@ To show the distribution of equivalence classes of outputs (across one or more m
 
 A distribution can be analyzed for a subset of data, and exported into a CSV file:
 
-    llm-play --distribution data/qwen2.5-7b-instruct_1.0/a_2f73f5f
+    llm-play --distribution data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6
              --output distribution.csv
-    
+
 This will compute and visualise
 
 - [empirical probability](https://en.wikipedia.org/wiki/Empirical_probability) of equivalence classes;
@@ -196,15 +208,15 @@ Related work on semantic uncertainty:
 - Semantic Uncertainty: Linguistic Invariances for Uncertainty Estimation in Natural Language Generation<br>
   Lorenz Kuhn, Yarin Gal, Sebastian Farquhar<br>
   ICLR 2023
-    
+
 Note that `--distribution` does not itself perform any data extraction or partitioning.
 
 ### Comparing Distributions
 
 To analyse difference between distributions of equivalence classes, e.g. for different model temperatures, use the following command:
 
-    llm-play --diff data/qwen2.5-7b-instruct_1.0/a_2f73f5f data/qwen2.5-7b-instruct_0.5/a_2f73f5f
-    
+    llm-play --diff data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 data/qwen2.5-7b-instruct_0.5/a_4ae91f5bd6090fb6
+
 This command aligns the class labels between these two distributions w.r.t. the specified equivalence relation, as well as computes some useful statistics:
 
 - [Wasserstein metric](https://en.wikipedia.org/wiki/Wasserstein_metric)
@@ -223,13 +235,13 @@ The samples or extracted data can be evaluated using function. This example eval
 Special evaluation function are provided for convenience. To evaluate data by checking if each datum is equal to a specific value, i.e. `Beijing`, use:
 
     llm-play --map data --equal Beijing
-    
+
 The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--equivalence` or the default one selected with `-c`. It will return either `Yes` or `No`.
 
 Evalation can be done for a subset of outputs:
 
-    llm-play --map data/qwen2.5-7b-instruct_1.0/a_2f73f5f --equal Beijing
-    
+    llm-play --map data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 --equal Beijing
+
 ### Predicates
 
 Predicates are special one-the-fly query evaluators. For example, this command acts as a predicate over `$CITY`:
@@ -243,7 +255,7 @@ It is equivalent to the following:
               --equal Yes \
               --equivalence __TRIMMED_CASE_INSENSITIVE__ \
               --quiet
-              
+
 Additionally, the predicate will terminate with the zero exit code iff it passes the evaluation. Predicates can only be applied to interactive commands with a single model/task/response, and without a specified output.
 
 ## Data Formats
@@ -264,7 +276,7 @@ The identity function can be used to convert data between different formats, e.g
 
     llm-play --map data --function __ID__ --output data.json
     llm-play --map data.json --function __ID__ --output data.csv
-    
+
 ## Shell Template Language
 
 The shell template language allows dynamic substitution of specific placeholders with runtime values before executing a shell command. These placeholders are instantiated and replaced with their corresponding values before the command is executed by the system shell.
