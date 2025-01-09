@@ -133,9 +133,9 @@ By default, the extracted data is saved into "txt" files. The file extension can
 
 Transformation is performed by either builtin functions or shell commands. The builtin function `__ID__` simply returns the entire string without modification. The builtin function `__FIRST_TAGGED_ANSWER__` returns the first occurence of a string wrapped into the tag `<answer></answer>`. The builtin function `__FIRST_MARKDOWN_CODE_BLOCK__` extract the content of the first markdown block.
 
-Function defined through shell commands should use the [shell template language](#shell-template-language). For example, this is equivalent to `__FIRST_TAGGED_ANSWER__` for single-line answers:
+Function defined through shell commands should use the [shell template language](#shell-template-language). For example, this is to count the number of characters in each sample:
 
-    --function "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
+    --function 'wc -m < %%ESCAPED_DATA_FILE%%'
 
 A transformation of a datum fails iff the function terminates with a non-zero exit code; in this case, the datum is ignored. Thus, shell commands can also be used for data filtering. e.g. filtering out responses not containing useful information.
 
@@ -320,9 +320,9 @@ The shell template language allows dynamic substitution of specific placeholders
 
 Available placeholders for data:
 
-- `%%CONDENSED_ESCAPED_DATA%%` - the single-lined, stripped, truncated to 100 characters and shell-escaped text.
+- `%%CONDENSED_ESCAPED_DATA%%` - the single-lined, stripped, truncated and shell-escaped text.
 - `%%ESCAPED_DATA%%` - the shell-escaped text.
-- `%%CONDENCED_DATA%%` - the single-lined, stripped, truncated to 100 characters text.
+- `%%CONDENSED_DATA%%` - the single-lined, stripped, truncated text.
 - `%%RAW_DATA%%` - the original text.
 
 Similarly, `RAW_`, `ESCAPED_`, `CONDENCED_` and `CONDENSED_ESCAPED_` variants are provided for the following variables:
@@ -335,7 +335,7 @@ The `ESCAPED_` variants are provided for the following variables:
 - `%%PROMPT_FILE%%` - a path to a temporary file containing the prompt.
 - `%%PROMPT_LABEL%%` - the prompt label.
 
-For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%RAW_DATA1%%` and `%%PROMPT2_LABEL%%`.
+For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%RAW_DATA1%%` and `%%PROMPT_LABEL2%%`.
 
 ## Other Options
 

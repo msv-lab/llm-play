@@ -30,6 +30,7 @@ import re
 from collections import deque
 import hashlib
 from pathlib import Path
+import json
 
 import yaml
 import InquirerPy
@@ -130,7 +131,10 @@ relations:
 
 USER_CONFIG_FILE = Path.home() / ".llm_play.yaml"
 
-CSV_CONTENT_TRUNCATE_LENGTH = 50
+TRUNCATED_CSV_DATA_LENGTH = 50
+
+CONDENSED_SHELL_DATA_LENGTH = 100
+
 
 @dataclass
 class _FunctionFailure:
@@ -140,7 +144,7 @@ FUNCTION_FAILURE = _FunctionFailure()
 
 @dataclass
 class FunctionSuccess:
-    result: str
+    value: str
 
 FunctionResult = _FunctionFailure | FunctionSuccess
 
@@ -230,6 +234,18 @@ class StreamItem:
     sample: Sample
 
 
+def stream_item_table_format(max_model_name_len, max_prompt_label_len):
+    return [
+        ("Model", max(max_model_name_len, len("Model")), "l"),
+        ("Temp.", len("Temp."), "r"),
+        ("Label", min(max(max_prompt_label_len, len("Label")), 20), "l"),
+        ("Hash", max(len("Hash"), 10), "l"),
+        ("Sample", len("Sample"), "r"),
+        ("Class", len("Class"), "r"),
+        ("Content", None, "l"),
+    ]
+
+
 def get_provider_by_model(model, config):
     for m in config["models"]:
         if model == m["name"]:
@@ -251,15 +267,7 @@ class LLMSampleStream:
 
         max_model_name_len = max(len(d.model) for d in query.distributions)
         max_prompt_label_len = max(len(p.label) for p in query.prompts)
-        self._table_format = [
-            ("Model", max(max_model_name_len, len("Model")), "l"),
-            ("Temp.", len("Temp."), "r"),
-            ("Label", min(max(max_prompt_label_len, len("Label")), 20), "l"),
-            ("Hash", max(len("Hash"), 10), "l"),
-            ("Sample", len("Sample"), "r"),
-            ("Class", len("Class"), "r"),
-            ("Content", None, "l"),
-        ]
+        self._table_format = stream_item_table_format(max_model_name_len, max_prompt_label_len)
 
     def __iter__(self):
         return self
@@ -289,20 +297,17 @@ class LLMSampleStream:
         if len(self.cache) == 0:
             d, p, n = self.execution_plan.pop()
             samples = self._sample(d, p, n)
-            new_entries = []
-            for s_content in samples:
+            for content in samples:
                 s = Sample(id=self.current_sample_index,
                            class_id=self.current_sample_index,
-                           content = s_content)
-                new_entries.append((d, p, s))
+                           content = content)
+                self.cache.append((d, p, s))
                 self.current_sample_index += 1
-            new_entries.reverse()
-            self.cache.extend(new_entries)
             if n > len(samples):
                 self.execution_plan.append((d, p, n - len(samples)))
             else:
                 self.current_sample_index = 0
-        d, p, s = self.cache.pop()
+        d, p, s = self.cache.popleft()
         return StreamItem(
             distribution=d,
             prompt=p,
@@ -339,16 +344,26 @@ def stream_response_to_stdout(prompt, model, temperature, config):
         print()
 
 
-class JSONStream:
-    def __init__(self, data):
+class JSONDataStream:
+    def __init__(self, json_data):
         self.current_item_index = 0
-        self.current_sample_index = 0
-
-        self.size = 0
-
-        max_model_name_len = max(len(m) for m in query.models)
-        max_prompt_name_len = max(len(p.label) for p in query.prompt)
-        self.table_format = 0
+        self._next_batch = False
+        max_model_name_len = 0
+        max_prompt_label_len = 0
+        self.cache = deque()
+        for distr_id, prompt_to_samples in json_data["data"].items():
+            for prompt_hash, samples in prompt_to_samples.items():
+                for sample in samples:
+                    d = Distribution.from_id(distr_id)
+                    if len(d.model) > max_model_name_len:
+                        max_model_name_len = len(d.model)
+                    p = Prompt(**next(p for p in json_data["prompts"] if p["hash"] == prompt_hash))
+                    if len(p.label) > max_prompt_label_len:
+                        max_prompt_label_len = len(p.label)
+                    s = Sample(**sample)
+                    self.cache.append((d, p, s))
+        self.size = len(self.cache)
+        self._table_format = stream_item_table_format(max_model_name_len, max_prompt_label_len)
 
     def __iter__(self):
         return self
@@ -357,66 +372,99 @@ class JSONStream:
         if self.current_item_index >= len(self):
             raise StopIteration
         self.current_item_index += 1
-        if len(self.cache) == 0:
-            model, prompt, n = self.execution_plan.pop()
-            samples = self._sample(model, prompt.prompt, self.temperature, n)
-            for s in samples:
-                self.cache.append((model, prompt, self.current_sample_index, s))
-                self.current_sample_index += 1
-            if n > len(samples):
-                self.execution_plan.append((model, prompt, n - len(samples)))
-            else:
-                self.current_sample_index = 0
-        model, prompt, sample_id, sample = self.cache.pop()
+        self._next_batch = False
+        d, p, s = self.cache.popleft()
+        if (len(self.cache) > 0 and
+            (self.cache[0][0] != d or self.cache[0][1] != p)):
+            self._next_batch = True
         return StreamItem(
-            model=model,
-            temperature=self.temperature,
-            prompt=prompt,
-            sample_id=sample_id,
-            class_id=sample_id,
-            content=sample,
+            distribution=d,
+            prompt=p,
+            sample=s,
         )
 
     def next_batch(self):
-        return self.current_index > 0 and len(self.current_sample_index) == 0
+        return self._next_batch
 
     def table_format(self):
-        return self.table_format
+        return self._table_format
 
     def __len__(self):
         return self.size
 
 
-def execute_batch_jobs(query, settings, output, config):
-    sample_stream = LLMSampleStream(query, config)
-    if len(sample_stream) > 1:
-        printer = TablePrinter(sample_stream.table_format())
-    for i in sample_stream:
+class Map:
+    def __init__(self, stream, function):
+        self.stream = stream
+        self.function = function
+
+    def __iter__(self):
+        return self
+
+    def _call_shell_function(self, sample, prompt, function):
+        with tempfile.NamedTemporaryFile() as prompt_file:
+            prompt_file.write(prompt.content.encode())
+            prompt_file.flush()
+            with tempfile.NamedTemporaryFile() as data_file:
+                data_file.write(sample.encode())
+                data_file.flush()
+                cmd = instantiate_shell_template(
+                    function,
+                    prompts=[prompt],
+                    prompt_files=[prompt_file.name],
+                    data=[sample],
+                    data_files=[data_file.name],
+                )
+                result = subprocess.run(
+                    cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    return FunctionSuccess(result.stdout)
+                else:
+                    return FUNCTION_FAILURE
+
+    def __next__(self):
+        while True:
+            i = next(self.stream)
+            if self.function in BUILTIN_FUNCTIONS:
+                result = BUILTIN_FUNCTIONS[self.function](i.sample.content)
+            else:
+                result = self._call_shell_function(i.sample.content, i.prompt, self.function)
+            if result == FUNCTION_FAILURE:
+                continue
+            return StreamItem(
+                distribution=i.distribution,
+                prompt=i.prompt,
+                sample=Sample(id=i.sample.id,
+                              class_id=i.sample.class_id,
+                              content=result.value)
+            )
+
+    def next_batch(self):
+        return self.stream.next_batch
+
+    def table_format(self):
+        return self.stream.table_format()
+
+    def __len__(self):
+        return len(self.stream)
+
+
+def get_fs_tree_writer(output):
+    def write(i):
         distr_dir = output / i.distribution.id()
         distr_dir.mkdir(exist_ok=True)
-
         prompt_file = distr_dir / f"{i.prompt.label}_{i.prompt.hash}.md"
         if not prompt_file.exists():
             prompt_file.write_text(i.prompt.content)
-
         responses_dir = distr_dir / f"{i.prompt.label}_{i.prompt.hash}"
         responses_dir.mkdir(exist_ok=True)
-        if settings["function"] != "__ID__":
-            result = transform(i.sample.content, i.prompt, settings["function"])
-        else:
-            result = i.sample.content
-        (responses_dir / f"{i.sample.id}_{i.sample.class_id}.md").write_text(result)
-        if len(sample_stream) > 1:
-            row = (
-                i.distribution.model,
-                i.distribution.temperature,
-                i.prompt.label,
-                i.prompt.hash,
-                i.sample.id,
-                i.sample.class_id,
-                result,
-            )
-            printer.print_row(row)
+        (responses_dir / f"{i.sample.id}_{i.sample.class_id}.md").write_text(i.sample.content)
+    return write
 
 
 def fs_tree_to_json(path_query):
@@ -431,11 +479,11 @@ def fs_tree_to_json(path_query):
             },
             ...
         ],
-        "samples": {
+        "data": {
             "<model_name>_<temperature>": {
                  "<prompt hash>": [
                       {
-                          "sample_id": ...
+                          "id": ...
                           "class_id": ...
                           "content": ...
                       },
@@ -478,7 +526,7 @@ def fs_tree_to_json(path_query):
                 if f.stem.count('_') == 1:
                     sample_id_str, class_id_str = tuple(f.stem.split("_"))
                     yield {
-                        "sample_id": int(sample_id_str),
+                        "id": int(sample_id_str),
                         "class_id": int(class_id_str),
                         "content": f.read_text()
                     }
@@ -487,7 +535,7 @@ def fs_tree_to_json(path_query):
         """
         returns [ { "hash": ..., "label": ..., "content": ... } ]
         and { "<prompt hash>": [
-                  { "sample_id": ..., "class_id": ..., "content": ... },
+                  { "id": ..., "class_id": ..., "content": ... },
                   ...
               ] }
         """
@@ -514,7 +562,7 @@ def fs_tree_to_json(path_query):
         prompts, samples = load_prompts_and_samples(distr_dir_data)
         return {
             "prompts": prompts,
-            "samples": {
+            "data": {
                 path_query.stem: samples
             }
         }
@@ -534,7 +582,7 @@ def fs_tree_to_json(path_query):
                             all_prompts.append(prompt)
             return {
                 "prompts": all_prompts,
-                "samples": all_samples
+                "data": all_samples
             }
         else:
             # this is a sample directory
@@ -545,62 +593,74 @@ def fs_tree_to_json(path_query):
             prompts, samples = load_prompts_and_samples(distr_dir_data)
             return {
                 "prompts": prompts,
-                "samples": {
+                "data": {
                     path_query.parent.stem: samples
                 }
             }
 
-def instantiate_shell_template(t, prompt, prompt_file, data, data_files):
+
+def instantiate_shell_template(t, prompts, prompt_files, data, data_files):
     assert len(data) == len(data_files)
+    assert len(prompts) == len(prompt_files)
 
-    def render(value, escape=False):
-        return shlex.quote(value) if escape and value is not None else value
+    def render(value, escape=False, truncate=False):
+        value = truncate_content(value, CONDENSED_SHELL_DATA_LENGTH) if truncate else value
+        value = shlex.quote(value) if escape else value
+        return value
 
-    if len(data) == 1:
-        t = t.replace(f"%%DATA%%", render(data[0]))
-        t = t.replace(f"%%ESCAPED_DATA%%", render(data[0], escape=True))
-        t = t.replace(f"%%DATA_FILE%%", render(data_files[0]))
-        t = t.replace(f"%%ESCAPED_DATA_FILE%%", render(data_files[0], escape=True))
-    else:
-        for i in range(len(data), 0, -1):
-            t = t.replace(f"%%DATA{i}%%", render(data[i - 1]))
-            t = t.replace(f"%%ESCAPED_DATA{i}%%", render(data[i - 1], escape=True))
-            t = t.replace(f"%%DATA_FILE{i}%%", render(data_files[i - 1]))
-            t = t.replace(
-                f"%%ESCAPED_DATA_FILE{i}%%", render(data_files[i - 1], escape=True)
-            )
-    t = t.replace(f"%%PROMPT%%", render(prompt.content, 0))
-    t = t.replace(f"%%ESCAPED_PROMPT%%", render(prompt.content, escape=True))
-    t = t.replace(f"%%PROMPT_FILE%%", render(prompt_file))
-    t = t.replace(f"%%ESCAPED_PROMPT_FILE%%", render(prompt_file, escape=True))
-    t = t.replace(f"%%PROMPT_LABEL%%", render(prompt.label))
-    t = t.replace(f"%%ESCAPED_PROMPT_LABEL%%", render(prompt.label, escape=True))
+    for (s, i) in [("", 0), ("1", 0), ("2", 1)]:
+        t = t.replace(f"%%RAW_DATA{s}%%", render(data[i-1]))
+        t = t.replace(f"%%ESCAPED_DATA{s}%%", render(data[i-1], escape=True))
+        t = t.replace(f"%%CONDENSED_DATA{s}%%", render(data[i-1], truncate=True))
+        t = t.replace(f"%%CONDENSED_ESCAPED_DATA{s}%%", render(data[i-1], truncate=True, escape=True))
+        t = t.replace(f"%%DATA_FILE{s}%%", render(data_files[i-1]))
+        t = t.replace(f"%%ESCAPED_DATA_FILE{s}%%", render(data_files[i-1], escape=True))
+        t = t.replace(f"%%PROMPT{s}%%", render(prompts[i-1].content, 0))
+        t = t.replace(f"%%ESCAPED_PROMPT{s}%%", render(prompts[i-1].content, escape=True))
+        t = t.replace(f"%%CONDENSED_PROMPT{s}%%", render(prompts[i-1].content, truncate=True))
+        t = t.replace(f"%%CONDENSED_ESCAPED_PROMPT{s}%%", render(prompts[i-1].content, escape=True, truncate=True))
+        t = t.replace(f"%%PROMPT_FILE{s}%%", render(prompt_files[i-1]))
+        t = t.replace(f"%%ESCAPED_PROMPT_FILE{s}%%", render(prompt_files[i-1], escape=True))
+        t = t.replace(f"%%PROMPT_LABEL{s}%%", render(prompts[i-1].label))
+        t = t.replace(f"%%ESCAPED_PROMPT_LABEL{s}%%", render(prompts[i-1].label, escape=True))
 
     return t
 
 
-def transform(sample, prompt, function):
-    with tempfile.NamedTemporaryFile() as prompt_file:
-        prompt_file.write(prompt.content.encode())
-        prompt_file.flush()
-        with tempfile.NamedTemporaryFile() as data_file:
-            data_file.write(sample.encode())
-            data_file.flush()
-            cmd = instantiate_shell_template(
-                function,
-                prompt,
-                prompt_file.name,
-                data=[sample],
-                data_files=[data_file.name],
-            )
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-            return result.stdout
+def get_stream_item_printer(stream):
+    printer = TablePrinter(stream.table_format())
+    def print_item(i):
+        row = (
+            i.distribution.model,
+            i.distribution.temperature,
+            i.prompt.label,
+            i.prompt.hash,
+            i.sample.id,
+            i.sample.class_id,
+            i.sample.content,
+        )
+        printer.print_row(row)
+    return print_item
+
+
+def to_single_line(text):
+    lines = text.splitlines()
+    non_empty_lines = [line.strip() for line in lines if line.strip()]
+    result = " ".join(non_empty_lines)
+    return result
+
+
+def truncate_content(content, length):
+    if len(content) > length:
+        current_length = 0
+        result = []
+        for char in content:
+            if current_length + 1 > length - len("..."):
+                break
+            current_length += 1
+            result.append(char)
+        return ''.join(result) + "..."
+    return content
 
 
 class TablePrinter:
@@ -632,13 +692,7 @@ class TablePrinter:
             sep.append("\u2500" * w)
         print(("\u2500" + "\u253C" + "\u2500").join(sep))
 
-    def _to_single_line(self, text):
-        lines = text.splitlines()
-        non_empty_lines = [line.strip() for line in lines if line.strip()]
-        result = " ".join(non_empty_lines)
-        return result
-
-    def _truncate(self, content, width):
+    def _truncate_displayed(self, content, width):
         if wcswidth(content) > width:
             current_width = 0
             result = []
@@ -664,7 +718,7 @@ class TablePrinter:
         formatted_row = []
         for i, cell in enumerate(row):
             _, col_width, alignment = self.column_specs[i]
-            processed = self._truncate(self._to_single_line(str(cell)), col_width)
+            processed = self._truncate_displayed(to_single_line(str(cell)), col_width)
             if alignment == "l":
                 formatted_row.append(self._wc_ljust(processed, col_width))
             else:
@@ -710,6 +764,9 @@ def parse_args():
         help="Evaluate truthfulness of the predicate",
     )
     parser.add_argument(
+        "--diff", type=str, help="Compute difference between distributions"
+    )
+    parser.add_argument(
         "--quiet", action="store_true", help="Do not print data on stdout"
     )
     parser.add_argument("--debug", action="store_true", help="Print logs on stderr")
@@ -718,47 +775,6 @@ def parse_args():
         "-c", "--configure", action="store_true", help="Set default options"
     )
     return parser.parse_args()
-
-
-def validate_arguments(arguments):
-    if (
-        (arguments.num_samples and arguments.num_samples > 1)
-        or (arguments.model and len(arguments.model) > 1)
-        or (arguments.prompt and len(arguments.prompt) > 1)
-    ) and not arguments.output:
-        print(
-            "for multiple samples/models/prompts, the output directory needs to be specified",
-            file=sys.stderr,
-        )
-        exit(1)
-
-    if (
-        sum(
-            [
-                bool(arguments.query),
-                bool(arguments.prompt),
-                bool(arguments.distribution),
-                bool(arguments.map),
-            ]
-        )
-        > 1
-    ):
-        print(
-            "choose only one of (1) query string, (2) prompt files, (3) sample distribution, (4) data transformation",
-            file=sys.stderr,
-        )
-        exit(1)
-
-    if (arguments.answer or arguments.code) and arguments.function:
-        print(
-            "the answer/code options cannot be used with a custom function",
-            file=sys.stderr,
-        )
-        exit(1)
-
-    if arguments.code and arguments.answer:
-        print("the code and the answer options are mutually exclusive", file=sys.stderr)
-        exit(1)
 
 
 def process_prompt_files(file_list):
@@ -824,14 +840,156 @@ def configure(config):
         yaml.dump(config, f, width=float("inf"))
 
 
+def load_data_store(store_path):
+    if store_path.is_file() and not store_path.suffix == "json":
+        print("unsupported input file", file=sys.stderr)
+        exit(1)
+    elif store_path.is_file():
+        with store_path.open("r") as file:
+            return json.load(file)
+    else:
+        return fs_tree_to_json(store_path)
+
+
+def print_with_newline_if_tty(content):
+    print(content, end="")
+    if os.isatty(sys.stdout.fileno()) and not content.endswith("\n"):
+        print()
+
+
+def command_dispatch(arguments, config):
+    stream = []
+    consumers = []
+
+    conflicting_options = [
+        bool(arguments.query),
+        bool(arguments.prompt),
+        bool(arguments.distribution),
+        bool(arguments.map),
+        bool(arguments.distribution),
+        bool(arguments.partition),
+        bool(arguments.diff),
+    ]
+
+    if (sum(conflicting_options) > 1):
+        print("conflicting commands", file=sys.stderr)
+        exit(1)
+
+    if (arguments.answer or arguments.code) and \
+       (arguments.distribution or arguments.partition or arguments.diff):
+        print(
+            "--answer/--code can only be used when sampling LLMs",
+            file=sys.stderr,
+        )
+        exit(1)
+
+    if arguments.map:
+        json_data = load_data_store(Path(arguments.map))
+        stream = JSONDataStream(json_data)
+        function=(
+            arguments.function
+            if arguments.function
+            else config["default"]["function"]
+        )
+        stream = Map(stream, function)
+        consumers.append(get_stream_item_printer(stream))
+    elif arguments.partition:
+        pass
+    elif arguments.diff:
+        pass
+    elif arguments.distribution:
+        pass
+    else:
+        # sampling command
+
+        if arguments.query:
+            prompts = [Prompt.unlabelled(arguments.query)]
+        elif not arguments.prompt and not arguments.query:
+            prompts = [Prompt.unlabelled(sys.stdin.read())]
+        else:
+            prompts = process_prompt_files(arguments.prompt)
+
+        if (arguments.code or arguments.answer) and arguments.function:
+            print("--function is mutually exclusive with --code/--answer", file=sys.stderr)
+            exit(1)
+
+        if arguments.code and arguments.answer:
+            print("--code  is mutually exclusive with --answer", file=sys.stderr)
+            exit(1)
+
+        function = '__ID__'
+
+        if arguments.answer:
+            function = '__FIRST_TAGGED_ANSWER__'
+            new_prompts = []
+            for p in prompts:
+                new_prompts.append(Prompts.labelled(p.concent + " " + ANSWER_FORMAT_DIRECTIVE, p.label))
+            prompts = new_prompts
+
+        if arguments.code:
+            function = '__FIRST_MARKDOWN_CODE_BLOCK__'
+
+        if arguments.function:
+            function = arguments.function
+
+        temperature=(
+            str(arguments.temperature)
+            if arguments.temperature
+            else config["default"]["temperature"]
+        )
+        distributions = []
+        for m in arguments.model if arguments.model else config["default"]["models"]:
+            distributions.append(Distribution(model=m, temperature=temperature))
+
+        query = LLMQuery(
+            distributions=distributions,
+            num_samples=arguments.num_samples if arguments.num_samples else 1,
+            prompts=prompts,
+        )
+
+        if (
+            len(query.prompts) * len(query.distributions) * query.num_samples == 1
+            and not arguments.output
+        ):
+            if function == "__ID__":
+                stream_response_to_stdout(
+                    prompts[0].content,
+                    query.distributions[0].model,
+                    query.distributions[0].temperature,
+                    config
+                )
+            else:
+                i = next(Map(LLMSampleStream(query, config), function))
+                print_with_newline_if_tty(i.sample.content)
+        else:
+            stream = LLMSampleStream(query, config)
+            if function != '__ID__':
+                 stream = Map(stream, function)
+            if (
+                len(query.prompts) * len(query.distributions) * query.num_samples == 1
+            ):
+                consumers.append(lambda i: print_with_newline_if_tty(i.sample.content))
+            else:
+                consumers.append(get_stream_item_printer(stream))
+
+    if arguments.output:
+        output_dir = Path(arguments.output)
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        consumers.append(get_fs_tree_writer(output_dir))
+
+    for i in stream:
+        for c in consumers:
+            c(i)
+
+
 def main():
     arguments = parse_args()
 
     if arguments.version:
         print(VERSION)
         exit(0)
-
-    validate_arguments(arguments)
 
     if os.path.isfile(USER_CONFIG_FILE):
         with open(USER_CONFIG_FILE, "r") as file:
@@ -843,73 +1001,7 @@ def main():
         configure(config)
         exit(0)
 
-    if arguments.query:
-        prompts = [Prompt.unlabelled(arguments.query)]
-    elif not arguments.prompt and not arguments.query:
-        prompts = [Prompt.unlabelled(sys.stdin.read())]
-    else:
-        prompts = process_prompt_files(arguments.prompt)
-
-    settings = dict()
-
-    if arguments.function:
-        settings["function"] = arguments.function
-    else:
-        settings["function"] = config["default"]["function"]
-
-    if arguments.answer:
-        settings["function"] = ANSWER_EXTRACTOR
-        new_prompts = []
-        for p in prompts:
-            new_prompts.append(Prompts.labelled(p.concent + " " + ANSWER_FORMAT_DIRECTIVE, p.label))
-        prompts = new_prompts
-
-    if arguments.code:
-        settings["function"] = CODE_EXTRACTOR
-
-    temperature=(
-        str(arguments.temperature)
-        if arguments.temperature
-        else config["default"]["temperature"]
-    )
-    distributions = []
-    for m in arguments.model if arguments.model else config["default"]["models"]:
-        distributions.append(Distribution(model=m, temperature=temperature))
-
-    query = LLMQuery(
-        distributions=distributions,
-        num_samples=arguments.num_samples if arguments.num_samples else 1,
-        prompts=prompts,
-    )
-
-    if arguments.map:
-        print(fs_tree_to_json(Path(arguments.map)))
-        exit(1)
-
-    if (
-        len(query.prompts) * len(query.distributions) * query.num_samples == 1
-        and not arguments.output
-    ):
-        if settings["function"] == "__ID__":
-            stream_response_to_stdout(
-                prompts[0].content,
-                query.distributions[0].model,
-                query.distributions[0].temperature,
-                config
-            )
-        else:
-            i = next(LLMSampleStream(query, config))
-            answer = transform(i.sample.content, i.prompt, settings["function"])
-            print(answer, end="")
-            if os.isatty(sys.stdout.fileno()):
-                print()
-    else:
-        output_dir = Path(arguments.output)
-        if output_dir.exists():
-            shutil.rmtree(output_dir)
-        output_dir.mkdir(parents=True)
-        execute_batch_jobs(query, settings, output_dir, config)
-
+    command_dispatch(arguments, config)
 
 if __name__ == "__main__":
     main()
