@@ -29,6 +29,7 @@ import subprocess
 import re
 from collections import deque
 import hashlib
+from pathlib import Path
 
 import yaml
 import InquirerPy
@@ -120,14 +121,14 @@ functions:
   - __FIRST_MARKDOWN_CODE_BLOCK__
   - |-
     {LLM_BASED_AFFIRMATION_CLASSIFIER}
-erelations:
+relations:
   - __ID__
   - __TRIMMED_CASE_INSENSITIVE__
   - |-
     {LLM_BASED_EQUIVALENCE_CHECKER}
 """
 
-USER_CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".llm_play.yaml")
+USER_CONFIG_FILE = Path.home() / ".llm_play.yaml"
 
 CSV_CONTENT_TRUNCATE_LENGTH = 50
 
@@ -391,172 +392,163 @@ def execute_batch_jobs(query, settings, output, config):
     if len(sample_stream) > 1:
         printer = TablePrinter(sample_stream.table_format())
     for i in sample_stream:
-        distr_path = os.path.join(output, i.distribution.id())
-        os.makedirs(distr_path, exist_ok=True)
+        distr_dir = output / i.distribution.id()
+        distr_dir.mkdir(exist_ok=True)
 
-        prompt_id = f"{i.prompt.label}_{i.prompt.hash}"
-        prompt_file = os.path.join(distr_path, f"{prompt_id}.md")
-        if not os.path.exists(prompt_file):
-            with open(prompt_file, "w") as file:
-                file.write(i.prompt.content)
+        prompt_file = distr_dir / f"{i.prompt.label}_{i.prompt.hash}.md"
+        if not prompt_file.exists():
+            prompt_file.write_text(i.prompt.content)
 
-        responses_path = os.path.join(distr_path, prompt_id)
-        os.makedirs(responses_path, exist_ok=True)
+        responses_dir = distr_dir / f"{i.prompt.label}_{i.prompt.hash}"
+        responses_dir.mkdir(exist_ok=True)
         if settings["function"] != "__ID__":
             result = transform(i.sample.content, i.prompt, settings["function"])
         else:
             result = i.sample.content
-        sample_file = f"{i.sample.id}_{i.sample.class_id}.md"
-        with open(os.path.join(responses_path, sample_file), "w") as file:
-            file.write(result)
-            if len(sample_stream) > 1:
-                row = (
-                    i.distribution.model,
-                    i.distribution.temperature,
-                    i.prompt.label,
-                    i.prompt.hash,
-                    i.sample.id,
-                    i.sample.class_id,
-                    result,
-                )
-                printer.print_row(row)
+        (responses_dir / f"{i.sample.id}_{i.sample.class_id}.md").write_text(result)
+        if len(sample_stream) > 1:
+            row = (
+                i.distribution.model,
+                i.distribution.temperature,
+                i.prompt.label,
+                i.prompt.hash,
+                i.sample.id,
+                i.sample.class_id,
+                result,
+            )
+            printer.print_row(row)
 
 
 def fs_tree_to_json(path_query):
     """
     JSON format:
     {
-        "prompts": {
-            "<prompt hash>": {
-               "content": ...
+        "prompts": [
+            {
+               "hash": ...
                "label": ...
+               "content": ...
             },
-        },
-        "distributions": {
-             "<distribution_id>": {
-                  "model": "<model_name>",
-                  "temperature": "<temperature>"
-             },
-        },
+            ...
+        ],
         "samples": {
-            "<distribution_id>": {
-                 "<prompt hash>": {
-                      "sample_id": {
+            "<model_name>_<temperature>": {
+                 "<prompt hash>": [
+                      {
+                          "sample_id": ...
                           "class_id": ...
                           "content": ...
                       },
-                 }
+                 ]
             }
         },
         ...
     }
     FS-tree format:
     <root>
-    ├── <model_name>_<temperature>
-    │   ├── <prompt_label>_<prompt_hash>.md
-    │   └── <prompt_label>_<prompt_hash>
-    │       ├── <sample_id>_<class_id>.md
+    ├── <model_name>_<temperature>            # distr dir
+    │   ├── <prompt_label>_<prompt_hash>.md   # prompt file
+    │   └── <prompt_label>_<prompt_hash>      # sample dir
+    │       ├── <sample_id>_<class_id>.md     # sample file
     │       ...
     │       └── <sample_id>_<class_id>.md
     └── <model_name>_<temperature>
         ├── ...
         ...
     """
-    def collect_sample_dirs(path):
-        # Returns list of (task id, prompt file path, sample dir)
-        result = []
-        entries = os.listdir(path)
-        md_files = {
-            os.path.splitext(entry)[0]: os.path.join(path, entry)
-            for entry in entries
-            if entry.endswith(".md")
-        }
-        directories = {
-            entry: os.path.join(path, entry)
-            for entry in entries
-            if os.path.isdir(os.path.join(path, entry))
-        }
-        for name, md_file_path in md_files.items():
-            if name in directories:
-                result.append((name, md_file_path, directories[name]))
-        return result
+    def parse_distr_dir(distr_dir):
+        """
+        all entries such that the name of an md file contains _, and there is a corresponding dir
+        """
+        for prompt_file in distr_dir.iterdir():
+            if prompt_file.is_file() and prompt_file.suffix == ".md":
+                sample_dir_name = prompt_file.stem
+                if "_" in sample_dir_name:
+                    prompt_label, prompt_hash = tuple(sample_dir_name.rsplit("_", 1))
+                    sample_dir = distr_dir / sample_dir_name
+                    if sample_dir.exists() and sample_dir.is_dir():
+                        yield (prompt_label, prompt_hash, prompt_file, sample_dir)
 
-    def collect_sample_files(sample_dir):
-        sample_files = []
-        for file_name in os.listdir(sample_dir):
-            full_path = os.path.join(sample_dir, file_name)
-            if os.path.isfile(full_path):
-                file_parts = file_name.rsplit(".", 1)
-                name_parts = file_parts[0].split("_")
-                sample_id = name_parts[0]
-                class_id = name_parts[-1] if len(name_parts) > 1 else None
-                sample_files.append((sample_id, class_id, full_path))
-        return sample_files
+    def collect_samples(sample_dir):
+        """
+        collect all files in sample_dir in the form <sample_id>_<class_id>.<etc>
+        """
+        for f in sample_dir.iterdir():
+            if f.is_file():
+                if f.stem.count('_') == 1:
+                    sample_id_str, class_id_str = tuple(f.stem.split("_"))
+                    yield {
+                        "sample_id": int(sample_id_str),
+                        "class_id": int(class_id_str),
+                        "content": f.read_text()
+                    }
 
-    def load_prompts_and_samples(data):
-        # Accepts list of (task_id, prompt_file, sample_dir)
-        # Returns (task_id -> [(sample_id, class_id, content_file)],
-        #          task_id -> prompt)
+    def load_prompts_and_samples(distr_dir_data):
+        """
+        returns [ { "hash": ..., "label": ..., "content": ... } ]
+        and { "<prompt hash>": [
+                  { "sample_id": ..., "class_id": ..., "content": ... },
+                  ...
+              ] }
+        """
+        prompts = []
         samples = dict()
-        prompts = dict()
-        for task_id, md_file_path, sample_dir in data:
-            with open(md_file_path, "r") as f:
-                prompts[task_id] = f.read()
-            samples[task_id] = collect_sample_files(sample_dir)
-        return (samples, prompts)
+        for (prompt_label, prompt_hash, prompt_file, sample_dir) in distr_dir_data:
+            prompts.append({
+                "hash": prompt_hash,
+                "label": prompt_label,
+                "content": prompt_file.read_text()
+            })
+            samples[prompt_hash] = list(collect_samples(sample_dir))
+        return (prompts, samples)
 
-    def pick_directory(path):
-        subdirectories = [
-            d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))
-        ]
-        if not subdirectories:
+    def pick_subdir(path):
+        subdirs = [d for d in path.iterdir() if d.is_dir()]
+        if len(subdirs) == 0:
             return None
         else:
-            return os.path.join(path, subdirectories[0])
+            return subdirs[0]
 
-    data = collect_sample_dirs(path_query)
-    if len(data) > 0:
-        # this is a model directory
-        samples, prompts = load_prompts_and_samples(data)
-        last_dir = os.path.basename(os.path.normpath(path_query))
-        model_name, temperature = tuple(last_dir.rsplit("_", 1))
-        return DataStore(prompts=prompts, samples={(model_name, temperature): samples})
-    else:
-        # this is either a top-level directory, or a sample directory
-        some_dir = pick_directory(path_query)
-        if some_dir:
-            data = collect_sample_dirs(some_dir)
-            if len(data) > 0:
-                subdirectories = [
-                    d
-                    for d in os.listdir(path_query)
-                    if os.path.isdir(os.path.join(path, d))
-                ]
-                all_samples = dict()
-                prompts = dict()
-                for model_dir in subdirectories:
-                    data = collect_sample_dirs(os.path.join(path_query, model_dir))
-                    assert len(data) > 0
-                    model_name, temperature = tuple(last_dir.rsplit("_", 1))
-                    samples, prompts = load_prompts_and_samples(data)
-                    all_samples[(model_name, temperature)] = samples
-                return DataStore(prompts=prompts, samples=all_samples)
-            else:
-                # we assume there should be no subdirectories in the sample directory:
-                print("failed to interpret data path", file=sys.stderr)
-                exit(1)
+    distr_dir_data = list(parse_distr_dir(path_query))
+    if len(distr_dir_data) > 0: # path_query is a distr dir
+        prompts, samples = load_prompts_and_samples(distr_dir_data)
+        return {
+            "prompts": prompts,
+            "samples": {
+                path_query.stem: samples
+            }
+        }
+    else: # path_query is either the root directory, or a sample directory
+        subdirs = [d for d in path_query.iterdir() if d.is_dir()]
+        if len(subdirs) > 0:
+            # assume there are not subdirs in a sample dir, so path_query is the root directory
+            all_prompts = []
+            all_samples = dict()
+            for distr_dir in subdirs:
+                distr_dir_data = list(parse_distr_dir(distr_dir))
+                if len(distr_dir_data) > 0:
+                    prompts, samples = load_prompts_and_samples(distr_dir_data)
+                    all_samples[distr_dir.stem] = samples
+                    for prompt in prompts:
+                        if not any(p["hash"] == prompt["hash"] for p in all_prompts):
+                            all_prompts.append(prompt)
+            return {
+                "prompts": all_prompts,
+                "samples": all_samples
+            }
         else:
             # this is a sample directory
-            task_id = os.path.basename(os.path.normpath(path_query))
-            parent_dir = os.path.dirname(os.path.normpath(path_query))
-            model_temp = os.path.basename(os.path.normpath(parent_dir))
-            model_name, temperature = tuple(model_temp.rsplit("_", 1))
-            data = [(task_id, os.path.join(parent_dir, f"/{task_id}.md"), path_query)]
-            samples, prompts = load_prompts_and_samples(data)
-            return DataStore(
-                prompts=prompts, samples={(model_name, temperature): samples}
-            )
+            prompt_label, prompt_hash = tuple(path_query.stem.rsplit("_", 1))
+            prompt_file = path_query.parent / f"{prompt_label}_{prompt_hash}.md"
+            distr_dir_data = [(prompt_label, prompt_hash, prompt_file, path_query)]
 
+            prompts, samples = load_prompts_and_samples(distr_dir_data)
+            return {
+                "prompts": prompts,
+                "samples": {
+                    path_query.parent.stem: samples
+                }
+            }
 
 def instantiate_shell_template(t, prompt, prompt_file, data, data_files):
     assert len(data) == len(data_files)
@@ -891,7 +883,7 @@ def main():
     )
 
     if arguments.map:
-        print(load_data(arguments.map))
+        print(fs_tree_to_json(Path(arguments.map)))
         exit(1)
 
     if (
@@ -912,10 +904,11 @@ def main():
             if os.isatty(sys.stdout.fileno()):
                 print()
     else:
-        if os.path.exists(arguments.output):
-            shutil.rmtree(arguments.output)
-        os.makedirs(arguments.output)
-        execute_batch_jobs(query, settings, arguments.output, config)
+        output_dir = Path(arguments.output)
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        execute_batch_jobs(query, settings, output_dir, config)
 
 
 if __name__ == "__main__":
