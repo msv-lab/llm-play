@@ -923,7 +923,7 @@ def command_dispatch(arguments, config):
             function = '__FIRST_TAGGED_ANSWER__'
             new_prompts = []
             for p in prompts:
-                new_prompts.append(Prompts.labelled(p.concent + " " + ANSWER_FORMAT_DIRECTIVE, p.label))
+                new_prompts.append(Prompt.labelled(p.content + " " + ANSWER_DIRECTIVE, p.label))
             prompts = new_prompts
 
         if arguments.code:

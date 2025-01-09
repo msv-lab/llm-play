@@ -166,7 +166,7 @@ is equivalent to
 
     llm-play "Write a Python function that computes the n-th Catalan number" --function __FIRST_MARKDOWN_CODE_BLOCK__
 
-## Partitioning
+## Partitioning [WIP]
 
 By default, all responses are grouped into equivalence classes based on their syntactic identity. To ensure that responses are categorized without regard to trailing whitespace or differences in uppercase and lowercase characters, use the following command:
 
@@ -206,7 +206,7 @@ A relation defined via a shell command holds iff the command exits with the zero
 
 The equivalence relation can be configured using the `-c` option to select a predefined equivalence command when using the options `--diff`, `--equal` or `--partition`. Paritioning can also be performed on-the-fly while sampling responses if an equivalence relation is specified explicitly with `--relation`.
 
-## Data Analysis
+## Data Analysis [WIP]
 
 To show the distribution of equivalence classes of outputs (across one or more models and/or prompts), use the following command:
 
@@ -260,7 +260,7 @@ Related work on LLM confidence:
   Claudio Spiess, David Gros, Kunal Suresh Pai, Michael Pradel, Md Rafiqul Islam Rabin, Amin Alipour, Susmit Jha, Prem Devanbu, Toufique Ahmed<br>
   ICSE 2025
 
-## Evaluation
+## Evaluation [WIP]
 
 The samples or extracted data can be evaluated using function. This example evaluates whether each datum contains exactly one word:
 
@@ -276,7 +276,7 @@ Evalation can be done for a subset of outputs:
 
     llm-play --map data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 --equal Beijing
 
-### Predicates
+### Predicates [WIP]
 
 Predicates are special one-the-fly boolean evaluators. For example, this command acts as a predicate over `$CITY`:
 
@@ -295,7 +295,7 @@ It is equivalent to the following:
 
 The predicate will terminate with the zero exit code iff it passes the evaluation; its output cannot be exported with `--output`. Predicates can only be applied to commands with a single model/prompt/response.
 
-## Data Formats
+## Data Formats [WIP]
 
 The supported data formats are
 
