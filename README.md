@@ -102,7 +102,7 @@ When the argument of `--prompt` is a directory, all `*.md` files are loaded from
 
 If the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its label. When a query is supplied through stdin or as a command-line argument, the label is empty.
 
-To update an existing store, the `--update` option should be used instead of `--output`:
+[WIP] To update an existing store, the `--update` option should be used instead of `--output`:
 
     llm-play --prompt *.md --update samples
 
@@ -141,14 +141,14 @@ A transformation of a datum fails iff the function terminates with a non-zero ex
 
 Answers can also be extracted by LLMs. For example, this function checks if a prevously received response is affirmative:
 
-    --function "llm-play --model qwen2.5-7b-instruct '<answer>'%%CONDENSED_ESCAPED_DATA%%'</answer>. Is this answer affirmative? Respond Yes or No.' --answer"
+    --function "llm-play '<answer>'%%CONDENSED_ESCAPED_DATA%%'</answer>. Is this answer affirmative? Respond Yes or No.' --model qwen2.5-7b-instruct --answer"
 
 ### On-the-fly Transformation
 
 Data can be extracted on-the-fly while querying LLMs if `--function` is explicitly provided (not via `-c`):
 
-    llm-play "What is the capital of China? Wrap the final answer with <answer> </answer>" \
-             --function __FIRST_TAGGED_ANSWER__
+    llm-play "Name a city in China. Your answer should be formatted like **CITY NAME**" \
+             --function "grep -o '\*\*[^*]*\*\*' %%ESCAPED_DATA_FILE%% | head -n 1 | sed 's/\*\*//g'"
 
 There are convenience options to simplify extracting answers or code. The option `--answer` automatically augment the prompt and apply the necessary transformation to extract the relevant parts of the response:
 
@@ -202,7 +202,7 @@ An equivalence is defined via a builtin function or a shell command. The builtin
 
 A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based `qwen2.5-7b-instruct`'s judgement:
 
-    --relation "llm-play --model qwen2.5-7b-instruct 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --predicate"
+    --relation "llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model qwen2.5-7b-instruct --predicate"
 
 The equivalence relation can be configured using the `-c` option to select a predefined equivalence command when using the options `--diff`, `--equal` or `--partition`. Paritioning can also be performed on-the-fly while sampling responses if an equivalence relation is specified explicitly with `--relation`.
 
@@ -337,7 +337,7 @@ The `ESCAPED_` variants are provided for the following variables:
 
 For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%RAW_DATA1%%` and `%%PROMPT_LABEL2%%`.
 
-## Other Options
+## Other Options [WIP]
 
 The option `--debug` prints detailed logs on stderr.
 

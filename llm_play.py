@@ -47,9 +47,9 @@ ANSWER_DIRECTIVE = "Wrap the final answer with <answer></answer>."
 
 PREDICATE_DIRECTIVE = "Respond Yes or No."
 
-LLM_BASED_AFFIRMATION_CLASSIFIER = rf"llm-play --model {DEFAULT_MODEL} '<answer>'%%CONDENSED_ESCAPED_DATA%%'</answer>. Is this answer affirmative? Respond Yes or No.' --answer"
+LLM_BASED_AFFIRMATION_CLASSIFIER = rf"llm-play '<answer>'%%CONDENSED_ESCAPED_DATA%%'</answer>. Is this answer affirmative? Respond Yes or No.' --model {DEFAULT_MODEL} --answer"
 
-LLM_BASED_EQUIVALENCE_CHECKER = rf"llm-play --model {DEFAULT_MODEL} 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --predicate"
+LLM_BASED_EQUIVALENCE_CHECKER = rf"llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model {DEFAULT_MODEL} --predicate"
 
 DEFAULT_CONFIG = rf"""
 default:
