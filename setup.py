@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="llm-play",
-    version="1.0.0",
+    version="0.0.0",
     packages=find_packages(),
     py_modules=["llm_play"],
     install_requires=[
@@ -10,7 +10,8 @@ setup(
         'anthropic',
         'openai',
         'InquirerPy',
-        'wcwidth'
+        'wcwidth',
+        'mistletoe'
     ],
     entry_points={
         'console_scripts': [

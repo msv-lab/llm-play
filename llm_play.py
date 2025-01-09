@@ -1,4 +1,5 @@
-# llm-play is a tool that queries LLMs and executes experimental pipelines.
+# llm-play is a tool that queries LLMs, analyzes responses, and
+# executes experimental pipelines.
 # Copyright (C) 2025 Sergey Mechtaev
 #
 # This program is free software: you can redistribute it and/or modify
@@ -33,23 +34,28 @@ import yaml
 import InquirerPy
 from openai import OpenAI
 from wcwidth import wcwidth, wcswidth
+import mistletoe
 
 
 VERSION = "0.0.0"
 
-ANSWER_FORMAT_DIRECTIVE = "Wrap the final answer with <answer> </answer>."
-ANSWER_EXTRACTOR = (
-    r"sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
-)
-CODE_EXTRACTOR = r"awk '/^```/{if (!found++) { while(getline && $0 !~ /^```/) print; exit}}' %%ESCAPED_DATA_FILE%%"
+DEFAULT_MODEL = "qwen2.5-7b-instruct"
+
+ANSWER_DIRECTIVE = "Wrap the final answer with <answer></answer>."
+
+PREDICATE_DIRECTIVE = "Respond Yes or No."
+
+LLM_BASED_AFFIRMATION_CLASSIFIER = rf"llm-play --model {DEFAULT_MODEL} '<answer>'%%CONDENSED_ESCAPED_DATA%%'</answer>. Is this answer affirmative? Respond Yes or No.' --answer"
+
+LLM_BASED_EQUIVALENCE_CHECKER = rf"llm-play --model {DEFAULT_MODEL} 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --predicate"
 
 DEFAULT_CONFIG = rf"""
 default:
   models:
-    - qwen2.5-72b-instruct
+    - {DEFAULT_MODEL}
   temperature: 1.0
   function: __ID__
-  equivalence: __ID__
+  relation: __ID__
 providers:
   Aliyun:
     API: OpenAI
@@ -110,20 +116,65 @@ models:
     provider: CloseAI_Anthropic
 functions:
   - __ID__
+  - __FIRST_TAGGED_ANSWER__
+  - __FIRST_MARKDOWN_CODE_BLOCK__
   - |-
-    {ANSWER_EXTRACTOR}
-  - |-
-    {CODE_EXTRACTOR}
-equivalences:
+    {LLM_BASED_AFFIRMATION_CLASSIFIER}
+erelations:
   - __ID__
   - __TRIMMED_CASE_INSENSITIVE__
   - |-
-    llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: "%%DATA1%%" and "%%DATA2%%"?' --predicate
+    {LLM_BASED_EQUIVALENCE_CHECKER}
 """
 
 USER_CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".llm_play.yaml")
 
-CSV_TRUNCATE_LENGTH = 30
+CSV_CONTENT_TRUNCATE_LENGTH = 50
+
+@dataclass
+class _FunctionFailure:
+    pass
+
+FUNCTION_FAILURE = _FunctionFailure()
+
+@dataclass
+class FunctionSuccess:
+    result: str
+
+FunctionResult = _FunctionFailure | FunctionSuccess
+
+
+def extract_first_markdown_code_block(content):
+    parsed = mistletoe.Document(content)
+    for child in parsed.children:
+        if child.__class__.__name__ == "CodeFence":
+            return FunctionSuccess(child.children[0].content)
+    return FUNCTION_FAILURE
+
+
+BUILTIN_FUNCTIONS = {
+    "__ID__": (lambda x: FunctionSuccess(x)),
+    "__FIRST_TAGGED_ANSWER__": (
+        lambda s: (FunctionSuccess(s.split("<answer>", 1)[1].split("</answer>", 1)[0])
+                   if "<answer>" in s and "</answer>" in s and s.index("<answer>") < s.index("</answer>")
+                   else FUNCTION_FAILURE)
+    ),
+    "__FIRST_MARKDOWN_CODE_BLOCK__": (
+        lambda s: extract_first_markdown_code_block(s)
+    )
+}
+
+RELATION_POSITIVE = "Yes"
+RELATION_NEGATIVE = "No"
+
+BUILTIN_RELATIONS = {
+    "__ID__": (
+        lambda x, y: RELATION_POSITIVE if x == y else RELATION_NEGATIVE
+    ),
+    "__TRIMMED_CASE_INSENSITIVE__": (
+        lambda x, y: RELATION_POSITIVE if x.strip().lower() == y.strip().lower() else RELATION_NEGATIVE
+    )
+}
 
 
 @dataclass
@@ -144,21 +195,38 @@ class Prompt:
 
 
 @dataclass
-class LLMQuery:
-    models: List[str]
+class Distribution:
+    model: str
     temperature: str
+
+    def id(self):
+        return f"{self.model}_{self.temperature}"
+
+    @staticmethod
+    def from_id(id):
+        m, t = tuple(id.rsplit("_", 1))
+        return Distribution(m, t)
+
+
+@dataclass
+class Sample:
+    id: int
+    class_id: int
+    content: str
+
+
+@dataclass
+class LLMQuery:
+    distributions: List[Distribution]
     prompts: List[Prompt]
     num_samples: int
 
 
 @dataclass
 class StreamItem:
-    model: str
-    temperature: str
+    distribution: Distribution
     prompt: Prompt
-    sample_id: int
-    class_id: int
-    content: str
+    sample: Sample
 
 
 def get_provider_by_model(model, config):
@@ -168,25 +236,24 @@ def get_provider_by_model(model, config):
     raise ValueError(f"no provider for model {model}")
 
 
-class LLMSamples:
+class LLMSampleStream:
     def __init__(self, query, config):
-        self.temperature = query.temperature
         self.config = config
         self.current_item_index = 0
         self.current_sample_index = 0
         self.cache = deque()
         self.execution_plan = deque()
-        for m in query.models:
-            for t in query.prompts:
-                self.execution_plan.append((m, t, query.num_samples))
-        self.size = len(query.models) * len(query.prompts) * query.num_samples
+        for d in query.distributions:
+            for p in query.prompts:
+                self.execution_plan.append((d, p, query.num_samples))
+        self.size = len(query.distributions) * len(query.prompts) * query.num_samples
 
-        max_model_name_len = max(len(m) for m in query.models)
-        max_prompt_name_len = max(len(p.label) for p in query.prompts)
+        max_model_name_len = max(len(d.model) for d in query.distributions)
+        max_prompt_label_len = max(len(p.label) for p in query.prompts)
         self._table_format = [
             ("Model", max(max_model_name_len, len("Model")), "l"),
             ("Temp.", len("Temp."), "r"),
-            ("Label", min(max(max_prompt_name_len, len("Label")), 20), "l"),
+            ("Label", min(max(max_prompt_label_len, len("Label")), 20), "l"),
             ("Hash", max(len("Hash"), 10), "l"),
             ("Sample", len("Sample"), "r"),
             ("Class", len("Class"), "r"),
@@ -196,48 +263,49 @@ class LLMSamples:
     def __iter__(self):
         return self
 
-    def _sample(self, model, prompt, temperature, n):
-        provider = get_provider_by_model(model, self.config)
+    def _sample(self, distribution, prompt, n):
+        provider = get_provider_by_model(distribution.model, self.config)
         client = OpenAI(
             api_key=os.getenv(self.config["providers"][provider]["key_env_variable"]),
             base_url=self.config["providers"][provider]["base_url"],
         )
         if self.config["providers"][provider]["support_multiple_samples"]:
-            completion = client.chat.completions.create(
-                model=model, messages=[{"role": "user", "content": prompt}], n=n
-            )
-            return [c.message.content for c in completion.choices]
+            num_responses = n
         else:
-            completion = client.chat.completions.create(
-                model=model, messages=[{"role": "user", "content": prompt}], n=1
-            )
-            return [completion.choices[0].message.content]
+            num_responses = 1
+        completion = client.chat.completions.create(
+            model=distribution.model,
+            temperature=float(distribution.temperature),
+            messages=[{"role": "user", "content": prompt.content}],
+            n=num_responses
+        )
+        return [c.message.content for c in completion.choices]
 
     def __next__(self):
         if self.current_item_index >= len(self):
             raise StopIteration
         self.current_item_index += 1
         if len(self.cache) == 0:
-            model, prompt, n = self.execution_plan.pop()
-            samples = self._sample(model, prompt.content, self.temperature, n)
+            d, p, n = self.execution_plan.pop()
+            samples = self._sample(d, p, n)
             new_entries = []
-            for s in samples:
-                new_entries.append((model, prompt, self.current_sample_index, s))
+            for s_content in samples:
+                s = Sample(id=self.current_sample_index,
+                           class_id=self.current_sample_index,
+                           content = s_content)
+                new_entries.append((d, p, s))
                 self.current_sample_index += 1
             new_entries.reverse()
             self.cache.extend(new_entries)
             if n > len(samples):
-                self.execution_plan.append((model, prompt, n - len(samples)))
+                self.execution_plan.append((d, p, n - len(samples)))
             else:
                 self.current_sample_index = 0
-        model, prompt, sample_id, sample = self.cache.pop()
+        d, p, s = self.cache.pop()
         return StreamItem(
-            model=model,
-            temperature=self.temperature,
-            prompt=prompt,
-            sample_id=sample_id,
-            class_id=sample_id,
-            content=sample,
+            distribution=d,
+            prompt=p,
+            sample=s,
         )
 
     def next_batch(self):
@@ -258,6 +326,7 @@ def stream_response_to_stdout(prompt, model, temperature, config):
     )
     stream = client.chat.completions.create(
         model=model,
+        temperature=float(temperature),
         messages=[{"role": "user", "content": prompt}],
         stream=True,
     )
@@ -270,17 +339,6 @@ def stream_response_to_stdout(prompt, model, temperature, config):
 
 
 class JSONStream:
-    """
-    {
-        "prompts":
-        "model_id": {
-            "temperature": {
-            }
-        },
-        ...
-    }
-    """
-
     def __init__(self, data):
         self.current_item_index = 0
         self.current_sample_index = 0
@@ -328,284 +386,82 @@ class JSONStream:
         return self.size
 
 
-def recreate_directory(path):
-    if os.path.exists(path):
-        shutil.rmtree(path)
-    os.makedirs(path)
-
-
-def to_single_line(text):
-    lines = text.splitlines()
-    non_empty_lines = [line.strip() for line in lines if line.strip()]
-    result = " ".join(non_empty_lines)
-    return result
-
-
 def execute_batch_jobs(query, settings, output, config):
-    recreate_directory(output)
-    samples = LLMSamples(query, config)
-    if len(samples) > 1:
-        # TODO: check if terminal
-        printer = TablePrinter(samples.table_format())
-    for i in samples:
-        model_path = os.path.join(output, f"{i.model}_{i.temperature}")
-        os.makedirs(model_path, exist_ok=True)
-        prompt_file = os.path.join(model_path, f"{i.prompt.label}_{i.prompt.hash}.md")
+    sample_stream = LLMSampleStream(query, config)
+    if len(sample_stream) > 1:
+        printer = TablePrinter(sample_stream.table_format())
+    for i in sample_stream:
+        distr_path = os.path.join(output, i.distribution.id())
+        os.makedirs(distr_path, exist_ok=True)
+
+        prompt_id = f"{i.prompt.label}_{i.prompt.hash}"
+        prompt_file = os.path.join(distr_path, f"{prompt_id}.md")
         if not os.path.exists(prompt_file):
             with open(prompt_file, "w") as file:
                 file.write(i.prompt.content)
-        responses_path = os.path.join(model_path, f"{i.prompt.label}_{i.prompt.hash}")
+
+        responses_path = os.path.join(distr_path, prompt_id)
         os.makedirs(responses_path, exist_ok=True)
         if settings["function"] != "__ID__":
-            result = transform(i.content, i.prompt, settings["function"])
+            result = transform(i.sample.content, i.prompt, settings["function"])
         else:
-            result = i.content
-        with open(os.path.join(responses_path, f"{i.sample_id}.md"), "w") as file:
+            result = i.sample.content
+        sample_file = f"{i.sample.id}_{i.sample.class_id}.md"
+        with open(os.path.join(responses_path, sample_file), "w") as file:
             file.write(result)
-            if len(samples) > 1:
+            if len(sample_stream) > 1:
                 row = (
-                    i.model,
-                    i.temperature,
+                    i.distribution.model,
+                    i.distribution.temperature,
                     i.prompt.label,
                     i.prompt.hash,
-                    i.sample_id,
-                    i.class_id,
-                    to_single_line(result),
+                    i.sample.id,
+                    i.sample.class_id,
+                    result,
                 )
                 printer.print_row(row)
 
 
-def instantiate_shell_template(t, prompt, prompt_file, data, data_files):
-    assert len(data) == len(data_files)
-
-    def render(value, escape=False):
-        return shlex.quote(value) if escape and value is not None else value
-
-    if len(data) == 1:
-        t = t.replace(f"%%DATA%%", render(data[0]))
-        t = t.replace(f"%%ESCAPED_DATA%%", render(data[0], escape=True))
-        t = t.replace(f"%%DATA_FILE%%", render(data_files[0]))
-        t = t.replace(f"%%ESCAPED_DATA_FILE%%", render(data_files[0], escape=True))
-    else:
-        for i in range(len(data), 0, -1):
-            t = t.replace(f"%%DATA{i}%%", render(data[i - 1]))
-            t = t.replace(f"%%ESCAPED_DATA{i}%%", render(data[i - 1], escape=True))
-            t = t.replace(f"%%DATA_FILE{i}%%", render(data_files[i - 1]))
-            t = t.replace(
-                f"%%ESCAPED_DATA_FILE{i}%%", render(data_files[i - 1], escape=True)
-            )
-    t = t.replace(f"%%PROMPT%%", render(prompt.content, 0))
-    t = t.replace(f"%%ESCAPED_PROMPT%%", render(prompt.content, escape=True))
-    t = t.replace(f"%%PROMPT_FILE%%", render(prompt_file))
-    t = t.replace(f"%%ESCAPED_PROMPT_FILE%%", render(prompt_file, escape=True))
-    t = t.replace(f"%%PROMPT_LABEL%%", render(prompt.label))
-    t = t.replace(f"%%ESCAPED_PROMPT_LABEL%%", render(prompt.label, escape=True))
-
-    return t
-
-
-def transform(sample, prompt, function):
-    with tempfile.NamedTemporaryFile() as prompt_file:
-        prompt_file.write(prompt.content.encode())
-        prompt_file.flush()
-        with tempfile.NamedTemporaryFile() as data_file:
-            data_file.write(sample.encode())
-            data_file.flush()
-            cmd = instantiate_shell_template(
-                function,
-                prompt,
-                prompt_file.name,
-                data=[sample],
-                data_files=[data_file.name],
-            )
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-            return result.stdout
-
-
-class TablePrinter:
-
-    def __init__(self, column_specs):
-        """column_specs is a list of headers, max widths for columns
-        and alignment options ('l' or 'r'). If a column width is None,
-        the column will auto-adjust to fill the terminal width.
-
-        """
-        terminal_width = shutil.get_terminal_size((80, 20)).columns
-        num_columns = len(column_specs)
-
-        fixed_widths = [w[1] for w in column_specs if w[1] is not None]
-        fixed_total = sum(fixed_widths) + (num_columns - 1) * 3
-        flexible_columns = len([c for c in column_specs if c[1] is None])
-        # TODO what if overflow?
-        if flexible_columns > 0:
-            available_width = max(terminal_width - fixed_total, 0)
-            flexible_width = available_width // flexible_columns
-            column_specs = [
-                c if c[1] is not None else (c[0], flexible_width, c[2]) for c in column_specs
-            ]
-        self.column_specs = column_specs
-        headers = [c[0] for c in column_specs]
-        self.print_row(headers)
-        sep = []
-        for _, w, _ in column_specs:
-            sep.append("\u2500" * w)
-        print(("\u2500" + "\u253C" + "\u2500").join(sep))
-
-    def _truncate(self, content, width):
-        if wcswidth(content) > width:
-            current_width = 0
-            result = []
-            for char in content:
-                char_width = wcwidth(char)
-                if char_width == -1:
-                    continue
-                if current_width + char_width > width - len("..."):
-                    break
-                current_width += char_width
-                result.append(char)
-            return ''.join(result) + "..."
-        return content
-
-    def _wc_rjust(self, text, length, padding=' '):
-        return padding * max(0, (length - wcswidth(text))) + text
-
-    def _wc_ljust(self, text, length, padding=' '):
-        return text + padding * max(0, (length - wcswidth(text)))
-
-    # TODO: test with narrow screens and empty responses
-    def print_row(self, row):
-        formatted_row = []
-        for i, cell in enumerate(row):
-            _, col_width, alignment = self.column_specs[i]
-            if alignment == "l":
-                formatted_row.append(self._wc_ljust(self._truncate(str(cell), col_width), col_width))
-            else:
-                formatted_row.append(self._wc_rjust(self._truncate(str(cell), col_width), col_width))
-        print((" " + "\u2502" + " ").join(formatted_row))
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="llm-play interface")
-    parser.add_argument("query", nargs="?", type=str, help="Query string")
-    parser.add_argument("--prompt", nargs="+", type=str, help="Prompt files")
-    parser.add_argument("--output", type=str, help="Output FS-tree/JSON/CSV")
-    parser.add_argument("--update", type=str, help="FS-tree/JSON to update")
-    parser.add_argument("--model", nargs="+", type=str, help="List of models to query")
-    parser.add_argument(
-        "-t", "--temperature", type=float, help="Temperature for model generation"
-    )
-    parser.add_argument(
-        "-n", "--num-samples", type=int, help="Number of samples to generate"
-    )
-    parser.add_argument("--map", type=str, help="Transform given data")
-    parser.add_argument(
-        "--function", type=str, help="Data transformation shell command"
-    )
-    parser.add_argument(
-        "--extension", type=str, help="File extension for transformed data"
-    )
-    parser.add_argument("--answer", action="store_true", help="Extract answer")
-    parser.add_argument("--code", action="store_true", help="Extract code")
-    parser.add_argument("--distribution", type=str, help="Show distribution of samples")
-    parser.add_argument(
-        "--partition", type=str, help="Partition data into equivalence classes"
-    )
-    parser.add_argument(
-        "--equivalence", type=str, help="Equivalence relation shell command"
-    )
-    parser.add_argument(
-        "--equal", type=str, help="Check equivalence of data to the specified value"
-    )
-    parser.add_argument(
-        "--predicate",
-        action="store_true",
-        help="Evaluate truthfulness of the predicate",
-    )
-    parser.add_argument(
-        "--quiet", action="store_true", help="Do not print data on stdout"
-    )
-    parser.add_argument("--debug", action="store_true", help="Print logs on stderr")
-    parser.add_argument("--version", action="store_true", help="Print version")
-    parser.add_argument(
-        "-c", "--configure", action="store_true", help="Set default options"
-    )
-    return parser.parse_args()
-
-
-def validate_arguments(arguments):
-    if (
-        (arguments.num_samples and arguments.num_samples > 1)
-        or (arguments.model and len(arguments.model) > 1)
-        or (arguments.prompt and len(arguments.prompt) > 1)
-    ) and not arguments.output:
-        print(
-            "for multiple samples/models/prompts, the output directory needs to be specified",
-            file=sys.stderr,
-        )
-        exit(1)
-
-    if (
-        sum(
-            [
-                bool(arguments.query),
-                bool(arguments.prompt),
-                bool(arguments.distribution),
-                bool(arguments.map),
-            ]
-        )
-        > 1
-    ):
-        print(
-            "choose only one of (1) query string, (2) prompt files, (3) sample distribution, (4) data transformation",
-            file=sys.stderr,
-        )
-        exit(1)
-
-    if (arguments.answer or arguments.code) and arguments.function:
-        print(
-            "the answer/code options cannot be used with a custom function",
-            file=sys.stderr,
-        )
-        exit(1)
-
-    if arguments.code and arguments.answer:
-        print("the code and the answer options are mutually exclusive", file=sys.stderr)
-        exit(1)
-
-
-def process_prompt_files(file_list):
-    prompts = []
-    seen_labels = set()
-
-    for file_path in file_list:
-        base_name = os.path.basename(file_path)
-        label = os.path.splitext(base_name)[0]
-        if label in seen_labels:
-            print(f"duplicate prompt label: '{label}'", file=sys.stderr)
-            sys.exit(1)
-        seen_labels.add(label)
-        with open(file_path, "r") as file:
-            content = file.read()
-            prompts.append(Prompt.labelled(content, label))
-
-    return prompts
-
-
-@dataclass
-class DataStore:
-    # from task_id to prompt
-    prompts: Dict[str, str]
-    # from (model, temperature) -> task_id -> (sample_id, class_id, content_file)
-    samples: Dict[Tuple[str, str], Dict[str, Tuple[str, str, str]]]
-
-
-def load_data(path_query):
+def fs_tree_to_json(path_query):
+    """
+    JSON format:
+    {
+        "prompts": {
+            "<prompt hash>": {
+               "content": ...
+               "label": ...
+            },
+        },
+        "distributions": {
+             "<distribution_id>": {
+                  "model": "<model_name>",
+                  "temperature": "<temperature>"
+             },
+        },
+        "samples": {
+            "<distribution_id>": {
+                 "<prompt hash>": {
+                      "sample_id": {
+                          "class_id": ...
+                          "content": ...
+                      },
+                 }
+            }
+        },
+        ...
+    }
+    FS-tree format:
+    <root>
+    ├── <model_name>_<temperature>
+    │   ├── <prompt_label>_<prompt_hash>.md
+    │   └── <prompt_label>_<prompt_hash>
+    │       ├── <sample_id>_<class_id>.md
+    │       ...
+    │       └── <sample_id>_<class_id>.md
+    └── <model_name>_<temperature>
+        ├── ...
+        ...
+    """
     def collect_sample_dirs(path):
         # Returns list of (task id, prompt file path, sample dir)
         result = []
@@ -702,6 +558,235 @@ def load_data(path_query):
             )
 
 
+def instantiate_shell_template(t, prompt, prompt_file, data, data_files):
+    assert len(data) == len(data_files)
+
+    def render(value, escape=False):
+        return shlex.quote(value) if escape and value is not None else value
+
+    if len(data) == 1:
+        t = t.replace(f"%%DATA%%", render(data[0]))
+        t = t.replace(f"%%ESCAPED_DATA%%", render(data[0], escape=True))
+        t = t.replace(f"%%DATA_FILE%%", render(data_files[0]))
+        t = t.replace(f"%%ESCAPED_DATA_FILE%%", render(data_files[0], escape=True))
+    else:
+        for i in range(len(data), 0, -1):
+            t = t.replace(f"%%DATA{i}%%", render(data[i - 1]))
+            t = t.replace(f"%%ESCAPED_DATA{i}%%", render(data[i - 1], escape=True))
+            t = t.replace(f"%%DATA_FILE{i}%%", render(data_files[i - 1]))
+            t = t.replace(
+                f"%%ESCAPED_DATA_FILE{i}%%", render(data_files[i - 1], escape=True)
+            )
+    t = t.replace(f"%%PROMPT%%", render(prompt.content, 0))
+    t = t.replace(f"%%ESCAPED_PROMPT%%", render(prompt.content, escape=True))
+    t = t.replace(f"%%PROMPT_FILE%%", render(prompt_file))
+    t = t.replace(f"%%ESCAPED_PROMPT_FILE%%", render(prompt_file, escape=True))
+    t = t.replace(f"%%PROMPT_LABEL%%", render(prompt.label))
+    t = t.replace(f"%%ESCAPED_PROMPT_LABEL%%", render(prompt.label, escape=True))
+
+    return t
+
+
+def transform(sample, prompt, function):
+    with tempfile.NamedTemporaryFile() as prompt_file:
+        prompt_file.write(prompt.content.encode())
+        prompt_file.flush()
+        with tempfile.NamedTemporaryFile() as data_file:
+            data_file.write(sample.encode())
+            data_file.flush()
+            cmd = instantiate_shell_template(
+                function,
+                prompt,
+                prompt_file.name,
+                data=[sample],
+                data_files=[data_file.name],
+            )
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            return result.stdout
+
+
+class TablePrinter:
+
+    def __init__(self, column_specs):
+        """column_specs is a list of headers, max widths for columns
+        and alignment options ('l' or 'r'). If a column width is None,
+        the column will auto-adjust to fill the terminal width.
+
+        """
+        terminal_width = shutil.get_terminal_size((80, 20)).columns
+        num_columns = len(column_specs)
+
+        fixed_widths = [w[1] for w in column_specs if w[1] is not None]
+        fixed_total = sum(fixed_widths) + (num_columns - 1) * 3
+        flexible_columns = len([c for c in column_specs if c[1] is None])
+        # TODO what if overflow?
+        if flexible_columns > 0:
+            available_width = max(terminal_width - fixed_total, 0)
+            flexible_width = available_width // flexible_columns
+            column_specs = [
+                c if c[1] is not None else (c[0], flexible_width, c[2]) for c in column_specs
+            ]
+        self.column_specs = column_specs
+        headers = [c[0] for c in column_specs]
+        self.print_row(headers)
+        sep = []
+        for _, w, _ in column_specs:
+            sep.append("\u2500" * w)
+        print(("\u2500" + "\u253C" + "\u2500").join(sep))
+
+    def _to_single_line(self, text):
+        lines = text.splitlines()
+        non_empty_lines = [line.strip() for line in lines if line.strip()]
+        result = " ".join(non_empty_lines)
+        return result
+
+    def _truncate(self, content, width):
+        if wcswidth(content) > width:
+            current_width = 0
+            result = []
+            for char in content:
+                char_width = wcwidth(char)
+                if char_width == -1:
+                    continue
+                if current_width + char_width > width - len("..."):
+                    break
+                current_width += char_width
+                result.append(char)
+            return ''.join(result) + "..."
+        return content
+
+    def _wc_rjust(self, text, length, padding=' '):
+        return padding * max(0, (length - wcswidth(text))) + text
+
+    def _wc_ljust(self, text, length, padding=' '):
+        return text + padding * max(0, (length - wcswidth(text)))
+
+    # TODO: test with narrow screens and empty responses
+    def print_row(self, row):
+        formatted_row = []
+        for i, cell in enumerate(row):
+            _, col_width, alignment = self.column_specs[i]
+            processed = self._truncate(self._to_single_line(str(cell)), col_width)
+            if alignment == "l":
+                formatted_row.append(self._wc_ljust(processed, col_width))
+            else:
+                formatted_row.append(self._wc_rjust(processed, col_width))
+        print((" " + "\u2502" + " ").join(formatted_row))
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="llm-play interface")
+    parser.add_argument("query", nargs="?", type=str, help="Query string")
+    parser.add_argument("--prompt", nargs="+", type=str, help="Prompt files")
+    parser.add_argument("--output", type=str, help="Output FS-tree/JSON/CSV")
+    parser.add_argument("--update", type=str, help="FS-tree/JSON to update")
+    parser.add_argument("--model", nargs="+", type=str, help="List of models to query")
+    parser.add_argument(
+        "-t", "--temperature", type=float, help="Temperature for model generation"
+    )
+    parser.add_argument(
+        "-n", "--num-samples", type=int, help="Number of samples to generate"
+    )
+    parser.add_argument("--map", type=str, help="Transform given data")
+    parser.add_argument(
+        "--function", type=str, help="Data transformation shell command"
+    )
+    parser.add_argument(
+        "--extension", type=str, help="File extension for transformed data"
+    )
+    parser.add_argument("--answer", action="store_true", help="Extract answer")
+    parser.add_argument("--code", action="store_true", help="Extract code")
+    parser.add_argument("--distribution", type=str, help="Show distribution of samples")
+    parser.add_argument(
+        "--partition", type=str, help="Partition data into equivalence classes"
+    )
+    parser.add_argument(
+        "--relation", type=str, help="Equivalence relation shell command"
+    )
+    parser.add_argument(
+        "--equal", type=str, help="Check equivalence of data to the specified value"
+    )
+    parser.add_argument(
+        "--predicate",
+        action="store_true",
+        help="Evaluate truthfulness of the predicate",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="Do not print data on stdout"
+    )
+    parser.add_argument("--debug", action="store_true", help="Print logs on stderr")
+    parser.add_argument("--version", action="store_true", help="Print version")
+    parser.add_argument(
+        "-c", "--configure", action="store_true", help="Set default options"
+    )
+    return parser.parse_args()
+
+
+def validate_arguments(arguments):
+    if (
+        (arguments.num_samples and arguments.num_samples > 1)
+        or (arguments.model and len(arguments.model) > 1)
+        or (arguments.prompt and len(arguments.prompt) > 1)
+    ) and not arguments.output:
+        print(
+            "for multiple samples/models/prompts, the output directory needs to be specified",
+            file=sys.stderr,
+        )
+        exit(1)
+
+    if (
+        sum(
+            [
+                bool(arguments.query),
+                bool(arguments.prompt),
+                bool(arguments.distribution),
+                bool(arguments.map),
+            ]
+        )
+        > 1
+    ):
+        print(
+            "choose only one of (1) query string, (2) prompt files, (3) sample distribution, (4) data transformation",
+            file=sys.stderr,
+        )
+        exit(1)
+
+    if (arguments.answer or arguments.code) and arguments.function:
+        print(
+            "the answer/code options cannot be used with a custom function",
+            file=sys.stderr,
+        )
+        exit(1)
+
+    if arguments.code and arguments.answer:
+        print("the code and the answer options are mutually exclusive", file=sys.stderr)
+        exit(1)
+
+
+def process_prompt_files(file_list):
+    prompts = []
+    seen_labels = set()
+
+    for file_path in file_list:
+        base_name = os.path.basename(file_path)
+        label = os.path.splitext(base_name)[0]
+        if label in seen_labels:
+            print(f"duplicate prompt label: '{label}'", file=sys.stderr)
+            sys.exit(1)
+        seen_labels.add(label)
+        with open(file_path, "r") as file:
+            content = file.read()
+            prompts.append(Prompt.labelled(content, label))
+
+    return prompts
+
+
 def configure(config):
     model_choices = []
     for m in [entry["name"] for entry in config["models"]]:
@@ -734,10 +819,10 @@ def configure(config):
             },
             {
                 "type": "list",
-                "name": "equivalence",
+                "name": "relation",
                 "message": "Relation for --partition/--diff/--equal:",
-                "choices": config["equivalences"],
-                "default": config["default"]["equivalence"],
+                "choices": config["relations"],
+                "default": config["default"]["relation"],
             },
         ]
     )
@@ -790,13 +875,17 @@ def main():
     if arguments.code:
         settings["function"] = CODE_EXTRACTOR
 
+    temperature=(
+        str(arguments.temperature)
+        if arguments.temperature
+        else config["default"]["temperature"]
+    )
+    distributions = []
+    for m in arguments.model if arguments.model else config["default"]["models"]:
+        distributions.append(Distribution(model=m, temperature=temperature))
+
     query = LLMQuery(
-        models=arguments.model if arguments.model else config["default"]["models"],
-        temperature=(
-            str(arguments.temperature)
-            if arguments.temperature
-            else config["default"]["temperature"]
-        ),
+        distributions=distributions,
         num_samples=arguments.num_samples if arguments.num_samples else 1,
         prompts=prompts,
     )
@@ -806,20 +895,26 @@ def main():
         exit(1)
 
     if (
-        len(query.prompts) * len(query.models) * query.num_samples == 1
+        len(query.prompts) * len(query.distributions) * query.num_samples == 1
         and not arguments.output
     ):
         if settings["function"] == "__ID__":
             stream_response_to_stdout(
-                prompts[0].prompt, query.models[0], query.temperature, config
+                prompts[0].content,
+                query.distributions[0].model,
+                query.distributions[0].temperature,
+                config
             )
         else:
-            i = next(LLMSamples(query, config))
-            answer = transform(i.content, i.prompt, settings["function"])
+            i = next(LLMSampleStream(query, config))
+            answer = transform(i.sample.content, i.prompt, settings["function"])
             print(answer, end="")
             if os.isatty(sys.stdout.fileno()):
                 print()
     else:
+        if os.path.exists(arguments.output):
+            shutil.rmtree(arguments.output)
+        os.makedirs(arguments.output)
         execute_batch_jobs(query, settings, arguments.output, config)
 
 

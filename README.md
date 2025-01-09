@@ -1,6 +1,6 @@
 # llm-play
 
-A tool that queries LLMs and executes experimental pipelines.
+llm-play is a tool that queries LLMs, analyzes responses, and executes experimental pipelines.
 
 ```mermaid
 flowchart LR
@@ -15,6 +15,7 @@ flowchart LR
     B --> C["`**Analysis:**
     - Semantic partitioning
     - Uncertainty measures
+    - Confidence measures
     - Comparing distributions
     - CSV/JSON export
     `"]
@@ -52,15 +53,28 @@ Command-line options take precedence over the default settings.
 
 ## Batch Processing
 
-To sample 10 responses from two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, and save the results into the directory `samples`, use the command:
+When either the number of models or prompts or responses is greater than one, the tool operates in batch mode. For example, to sample 10 responses from two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, and save the results into the directory `samples`, use the command:
 
     llm-play --prompt prompts/question1.md \
-             --model qwen2.5-7b-instruct qwen2.5-coder-7b-instruct \
+             --model qwen2.5-72b-instruct qwen2.5-7b-instruct \
              -t 0.5 \
-             -n 10 \
-             --output samples
+             -n 10
 
-The samples will be stored in a filesystem tree as follows:
+In batch mode, a short summary of responses will be printed on stdout:
+
+    Model                │ Temp. │ Label     │ Hash       │ Sample │ Class │ Content
+    ─────────────────────┼───────┼───────────┼────────────┼────────┼───────┼────────
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      0 │     0 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      1 │     1 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      2 │     2 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      3 │     3 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      4 │     4 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      5 │     5 │ "It ...
+    ...
+
+In this table, `question1` is the prompt label, `4ae91f5bd6090fb6` is its SHAKE128 length=8 hash. Prompts with repeating hashes are skipped.  The `Class` column displays the IDs of equivalence classes of responses. Please see [Partitioning](#partitioning) for details.
+
+To save full results, the output store needs to be specified with the option `--output`. For example, adding `--output samples` will save the results in the following filesystem tree:
 
     samples
     ├── qwen2.5-7b-instruct_0.5
@@ -76,25 +90,15 @@ The samples will be stored in a filesystem tree as follows:
             ...
             └── 9_9.md
 
-In this tree, `question1` is the prompt label, `4ae91f5bd6090fb6` is its SHAKE128 length=8 hash, `question1_4ae91f5bd6090fb6.md` contains the prompt. Prompts with repeating hashes are skipped. `0_0.md`, ..., `9_4.md` are the samples. In `5_3.md`, `5` is the sample identifier, and `3` is the identifier of its equivalence class. Please see [Partitioning](#partitioning) for details.
-
-Responses, truncated to fill the width of the terminal, will also be printed on stdout:
-
-    Model                │ Temp. │ Label     │ Hash       │ Sample │ Class │ Content
-    ─────────────────────┼───────┼───────────┼────────────┼────────┼───────┼────────
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      0 │     0 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      1 │     1 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      2 │     2 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      3 │     3 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      4 │     4 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      5 │     5 │ "It ...
-    ...
+In this tree, `question1_4ae91f5bd6090fb6.md` contains the prompt; `0_0.md`, ..., `9_9.md` are the samples. In `5_3.md`, `5` is the sample identifier, and `3` is the identifier of its equivalence class.
 
 The data can also be stored in CSV and JSON formats. Please see [Data Formats](#data-formats) for details.
 
-To query a model with prompts contained in all files matching `*.md` in the current directory, use the command:
+Multiple prompt files can be specified as inputs, e.g. using all `*.md` files in the current directory:
 
     llm-play --prompt *.md --output samples
+
+When the argument of `--prompt` is a directory, all `*.md` files are loaded from this directory non-recursively.
 
 If the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its label. When a query is supplied through stdin or as a command-line argument, the label is empty.
 
@@ -102,21 +106,17 @@ To update an existing store, the `--update` option should be used instead of `--
 
     llm-play --prompt *.md --update samples
 
-In case of collisions, i.e. samples for the same (model, temperature, prompt) tuple already exist in the store, the prompt files with matching hashes will be updated, and the old responses are removed.
+In case of collisions, i.e. samples for the same (model, temperature, prompt) tuple already exist in the store, the prompt labels with matching hashes will be updated, and the old responses are removed.
 
 ## Data Transformation
 
-Data transformation can be used, for example, to extract relevant information from the generated samples or from data extracted in earlier stages. Transformation is performed by shell commands defined using the [shell template language](#shell-template-language). The special function `__ID__` simply returns the entire string without modification.
-
-This is to extract text within the tag `<answer> ... </answer>` from all samples in `samples`, and save the results into the directory `extracted`:
+Data transformation can be used, for example, to extract relevant information from the generated samples or from data extracted in earlier stages. This is to extract text within the tag `<answer> ... </answer>` from all samples in `samples`, and save the results into the directory `extracted`:
 
     llm-play --map samples \
-             --function "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%" \
+             --function __FIRST_TAGGED_ANSWER__ \
              --output extracted
 
 The above function searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
-
-A transformation of a datum fails, e.g. if it does not contain any relevant information to extract, iff the function terminates with a non-zero exit code.
 
 By default, the extracted data is saved into "txt" files. The file extension can be specified using the `--extension` options, e.g. `--extension py` resulting in:
 
@@ -129,35 +129,55 @@ By default, the extracted data is saved into "txt" files. The file extension can
             ...
             └── 9_9.py
 
+### Functions
+
+Transformation is performed by either by builtin functions or shell commands. The builtin function `__ID__` simply returns the entire string without modification. The builtin function `__FIRST_TAGGED_ANSWER__` returns the string wrapped into the first occurence of the tag `<answer></answer>`. The builtin function `__FIRST_MARKDOWN_CODE_BLOCK__` extract the content of the first markdown block.
+
+Function defined through shell commands should use the [shell template language](#shell-template-language). For example, this is equivalent to `__FIRST_TAGGED_ANSWER__` for single-line answers:
+
+    --function "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
+
+A transformation of a datum fails iff the function terminates with a non-zero exit code; in this case, the datum is ignored. Thus, shell commands can also be used for data filtering. e.g. filtering out responses not containing useful information.
+
+Answers can also be extracted by LLMs. For example, this function checks if a prevously received response is affirmative:
+
+    --function "llm-play --model qwen2.5-7b-instruct '<answer>'%%CONDENSED_ESCAPED_DATA%%'</answer>. Is this answer affirmative? Respond Yes or No.' --answer"
+
 ### On-the-fly Transformation
 
-Data can be extracted on-the-fly while querying LLMs if `--function` is explicitly provided:
+Data can be extracted on-the-fly while querying LLMs if `--function` is explicitly provided (not via `-c`):
 
     llm-play "What is the capital of China? Wrap the final answer with <answer> </answer>" \
-             --function "sed -n '0,/<\/answer>/s/.*<answer>\(.*\)<\/answer>.*/\1/p' %%ESCAPED_DATA_FILE%%"
+             --function __FIRST_TAGGED_ANSWER__
 
-There are built-in convenience functions to simplify extracting answers or code. The option `--answer` automatically augment the prompt and apply the necessary transformation to extract the relevant parts of the response:
+There are convenience options to simplify extracting answers or code. The option `--answer` automatically augment the prompt and apply the necessary transformation to extract the relevant parts of the response:
 
-    llm-play "What is the capital of China?" --answer
+    llm-play "${QUESTION}" --answer
+
+is equivalent to
+
+    llm-play "${QUESTION} Wrap the final answer with <answer></answer>."" --function __FIRST_TAGGED_ANSWER__
 
 The option `--code` extracts a code block from Markdown formatting.
 
-    llm-play "Write a Python function f(n: int) -> int that computes the n-th Catalan number" --code
+    llm-play "Write a Python function that computes the n-th Catalan number" --code
+
+is equivalent to
+
+    llm-play "Write a Python function that computes the n-th Catalan number" --function __FIRST_MARKDOWN_CODE_BLOCK__
 
 ## Partitioning
 
-By default, all responses are partitioned into equivalence classes based on their syntactic identity using the relation `__ID__`.
+By default, all responses are grouped into equivalence classes based on their syntactic identity. To ensures that responses are categorized without regard to trailing whitespace or differences in uppercase and lowercase characters, use the following command:
 
-To group answers into equivalence classes based qwen2.5's judgement, use the following command:
-
-    llm-play --partition data \
-             --equivalence "llm-play --model qwen2.5-72b-instruct 'Are these two answers equivalent: \"%%CONDENSED_DATA1%%\" and \"%%CONDENSED_DATA2%%\"?' --predicate" \
+    llm-play --partition responses \
+             --relation __TRIMMED_CASE_INSENSITIVE__ \
              --output classes
 
 Paritioning can be performed for a subset of data:
 
     llm-play --partition data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
-             --equivalence "$EQUIVALENCE" \
+             --relation "$EQUIVALENCE" \
              --output classes
 
 When using the filesystem tree format, the equivalence class identifiers will be added to the end of output file names, after the underscore:
@@ -171,21 +191,20 @@ When using the filesystem tree format, the equivalence class identifiers will be
             ...
             └── 9_3.md
 
-The class identifiers across multiple directories are not consistent.
-
-This equivalence is defined via a shell command that exits with the zero status code when two answers are equivalent. The classes are computed using [disjoint-set](https://en.wikipedia.org/wiki/Disjoint-set_data_structure).
+The class identifiers are consistent only within samples for a single (model, prompt) pair. The classes are computed using [disjoint-set](https://en.wikipedia.org/wiki/Disjoint-set_data_structure).
 
 Equivalence relations can be composed by repeated partitioning:
 
-    llm-play --partition data --equivalence "$EQUIVALENCE1" --output classes1
-    llm-play --partition classes1 --equivalence "$EQUIVALENCE2" --output classes2
+    llm-play --partition data --relation "$EQUIVALENCE1" --output classes1
+    llm-play --partition classes1 --relation "$EQUIVALENCE2" --output classes2
 
-The equivalence relation can be configured:
+An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` weakens the criteria by ignoring trailing whitespaces and is not case sensitive.
 
-- Using the `-c` option to select a predefined equivalence command.
-- Or, specifying a custom equivalence command using the `--equivalence` option.
+A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based `qwen2.5-7b-instruct`'s judgement:
 
-Paritioning can also be performed on-the-fly while querying models if any non-trivial equivalence relations is specified explicitly with `--equivalence`.
+    --relation "llm-play --model qwen2.5-7b-instruct 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --predicate"
+
+The equivalence relation can be configured using the `-c` option to select a predefined equivalence command when using the options `--diff`, `--equal` or `--partition`. Paritioning can also be performed on-the-fly while sampling responses if an equivalence relation is specified explicitly with `--relation`.
 
 ## Data Analysis
 
@@ -211,9 +230,9 @@ Related work on semantic uncertainty:
 
 Note that `--distribution` does not itself perform any data extraction or partitioning.
 
-### Comparing Distributions
+### Comparing Distributions [WIP]
 
-To analyse difference between distributions of equivalence classes, e.g. for different model temperatures, use the following command:
+To analyse the difference between empirical distributions of equivalence classes, e.g. for different model temperatures, use the following command:
 
     llm-play --diff data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 data/qwen2.5-7b-instruct_0.5/a_4ae91f5bd6090fb6
 
@@ -226,6 +245,21 @@ This command aligns the class labels between these two distributions w.r.t. the 
 
 The difference can be exported with `--output` into CSV format.
 
+### Confidence Measures [WIP]
+
+Compute the following confidence measure:
+
+- Average Token Probability
+- Generated Sequence Probability
+- Verbalized Self-Ask
+- Question Answering Logit
+
+Related work on LLM confidence:
+
+- Calibration and correctness of language models for code<br>
+  Claudio Spiess, David Gros, Kunal Suresh Pai, Michael Pradel, Md Rafiqul Islam Rabin, Amin Alipour, Susmit Jha, Prem Devanbu, Toufique Ahmed<br>
+  ICSE 2025
+
 ## Evaluation
 
 The samples or extracted data can be evaluated using function. This example evaluates whether each datum contains exactly one word:
@@ -236,7 +270,7 @@ Special evaluation function are provided for convenience. To evaluate data by ch
 
     llm-play --map data --equal Beijing
 
-The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--equivalence` or the default one selected with `-c`. It will return either `Yes` or `No`.
+The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--relation` or the default one selected with `-c`. It will return either `Yes` or `No`.
 
 Evalation can be done for a subset of outputs:
 
@@ -244,19 +278,22 @@ Evalation can be done for a subset of outputs:
 
 ### Predicates
 
-Predicates are special one-the-fly query evaluators. For example, this command acts as a predicate over `$CITY`:
+Predicates are special one-the-fly boolean evaluators. For example, this command acts as a predicate over `$CITY`:
 
     llm-play "Is $CITY the capital of China?" --predicate
 
 It is equivalent to the following:
 
-    llm-play "Is $CITY the capital of China? Respond Yes or No." \
-              --answer \
-              --equal Yes \
-              --equivalence __TRIMMED_CASE_INSENSITIVE__ \
-              --quiet
+    if [ "$(llm-play "Is $CITY the capital of China? Respond Yes or No." \
+                    --answer \
+                    --equal Yes \
+                    --relation __TRIMMED_CASE_INSENSITIVE__)" = "Yes" ]; then
+        exit 0
+    else
+        exit 1
+    fi
 
-Additionally, the predicate will terminate with the zero exit code iff it passes the evaluation. Predicates can only be applied to interactive commands with a single model/task/response, and without a specified output.
+The predicate will terminate with the zero exit code iff it passes the evaluation; its output cannot be exported with `--output`. Predicates can only be applied to commands with a single model/prompt/response.
 
 ## Data Formats
 
@@ -300,6 +337,8 @@ The `ESCAPED_` variants are provided for the following variables:
 
 For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%RAW_DATA1%%` and `%%PROMPT2_LABEL%%`.
 
-## Troubleshooting
+## Other Options
 
-The `--debug` option prints detailed logs on stderr.
+The option `--debug` prints detailed logs on stderr.
+
+The option `--quiet` disables all stdout output.
