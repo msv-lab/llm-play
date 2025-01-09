@@ -41,7 +41,7 @@ An LLM can be queried via an argument, a specified prompt file, or stdin:
 
 The argument and the file options are mutually-exclusive. They both take precedence over stdin.
 
-In this case, the response is printed on stdout, and can be redirected to a file:
+In either of these options, the response is printed on stdout, and can be redirected to a file:
 
     llm-play "What is the capital of China?" > output.md
 
@@ -53,7 +53,7 @@ Command-line options take precedence over the default settings.
 
 ## Batch Processing
 
-When either the number of models or prompts or responses is greater than one, the tool operates in batch mode. For example, to sample 10 responses from two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, and save the results into the directory `samples`, use the command:
+When either the number of models or prompts or responses is greater than one, the tool operates in batch mode. For example, to sample 10 responses from two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, use the command:
 
     llm-play --prompt prompts/question1.md \
              --model qwen2.5-72b-instruct qwen2.5-7b-instruct \
@@ -131,7 +131,7 @@ By default, the extracted data is saved into "txt" files. The file extension can
 
 ### Functions
 
-Transformation is performed by either by builtin functions or shell commands. The builtin function `__ID__` simply returns the entire string without modification. The builtin function `__FIRST_TAGGED_ANSWER__` returns the string wrapped into the first occurence of the tag `<answer></answer>`. The builtin function `__FIRST_MARKDOWN_CODE_BLOCK__` extract the content of the first markdown block.
+Transformation is performed by either builtin functions or shell commands. The builtin function `__ID__` simply returns the entire string without modification. The builtin function `__FIRST_TAGGED_ANSWER__` returns the first occurence of a string wrapped into the tag `<answer></answer>`. The builtin function `__FIRST_MARKDOWN_CODE_BLOCK__` extract the content of the first markdown block.
 
 Function defined through shell commands should use the [shell template language](#shell-template-language). For example, this is equivalent to `__FIRST_TAGGED_ANSWER__` for single-line answers:
 
@@ -168,7 +168,7 @@ is equivalent to
 
 ## Partitioning
 
-By default, all responses are grouped into equivalence classes based on their syntactic identity. To ensures that responses are categorized without regard to trailing whitespace or differences in uppercase and lowercase characters, use the following command:
+By default, all responses are grouped into equivalence classes based on their syntactic identity. To ensure that responses are categorized without regard to trailing whitespace or differences in uppercase and lowercase characters, use the following command:
 
     llm-play --partition responses \
              --relation __TRIMMED_CASE_INSENSITIVE__ \
@@ -266,7 +266,7 @@ The samples or extracted data can be evaluated using function. This example eval
 
     llm-play --map data --function 'wc -w <<< %%ESCAPED_DATA%% | grep -q ^1$ && echo Yes || echo No'
 
-Special evaluation function are provided for convenience. To evaluate data by checking if each datum is equal to a specific value, i.e. `Beijing`, use:
+An equality evaluation function is provided for convenience. To evaluate data by checking if each datum is equal to a specific value, i.e. `Beijing`, use:
 
     llm-play --map data --equal Beijing
 
@@ -307,7 +307,7 @@ The argument of `--output` is treated as a directory path unless it ends with `.
 
 FS-tree and JSON formats are interchangeble. They both can be used as outputs of LLM sampling, and as inputs or outputs of the `--map` and `--partition` commands. Only FS-tree and JSON can be updated with `--update`.
 
-CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as an alternative output format for `--map` and `--partition`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate data longer than 30 characters. If at least one datum is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`. Different commands produce different CSV schemas.
+CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as an alternative output format for `--map` and `--partition`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate long data. If at least one datum is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`. Different commands, e.g. `--distribution` and `--diff`, produce different CSV schemas.
 
 The identity function can be used to convert data between different formats, e.g.
 
