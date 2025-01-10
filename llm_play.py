@@ -563,7 +563,7 @@ def fs_tree_to_json(path_query):
         return {
             "prompts": prompts,
             "data": {
-                path_query.stem: samples
+                path_query.name: samples
             }
         }
     else: # path_query is either the root directory, or a sample directory
@@ -576,7 +576,7 @@ def fs_tree_to_json(path_query):
                 distr_dir_data = list(parse_distr_dir(distr_dir))
                 if len(distr_dir_data) > 0:
                     prompts, samples = load_prompts_and_samples(distr_dir_data)
-                    all_samples[distr_dir.stem] = samples
+                    all_samples[distr_dir.name] = samples
                     for prompt in prompts:
                         if not any(p["hash"] == prompt["hash"] for p in all_prompts):
                             all_prompts.append(prompt)
@@ -586,7 +586,7 @@ def fs_tree_to_json(path_query):
             }
         else:
             # this is a sample directory
-            prompt_label, prompt_hash = tuple(path_query.stem.rsplit("_", 1))
+            prompt_label, prompt_hash = tuple(path_query.name.rsplit("_", 1))
             prompt_file = path_query.parent / f"{prompt_label}_{prompt_hash}.md"
             distr_dir_data = [(prompt_label, prompt_hash, prompt_file, path_query)]
 
@@ -594,7 +594,7 @@ def fs_tree_to_json(path_query):
             return {
                 "prompts": prompts,
                 "data": {
-                    path_query.parent.stem: samples
+                    path_query.parent.name: samples
                 }
             }
 
@@ -885,6 +885,7 @@ def command_dispatch(arguments, config):
 
     if arguments.map:
         json_data = load_data_store(Path(arguments.map))
+        print(json_data)
         stream = JSONDataStream(json_data)
         function=(
             arguments.function
