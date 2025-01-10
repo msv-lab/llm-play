@@ -813,10 +813,12 @@ def configure(config):
                 "invalid_message": "should be at least 1 selection",
             },
             {
-                "type": "input",
+                "type": "number",
                 "name": "temperature",
+                "float_allowed": True,
+                "filter": (lambda result: float(result)),
                 "message": "Sampling temperature:",
-                "default": str(config["default"]["temperature"]),
+                "default": config["default"]["temperature"],
             },
             {
                 "type": "list",
@@ -838,6 +840,13 @@ def configure(config):
         config["default"] = selected
     with open(USER_CONFIG_FILE, "w") as f:
         yaml.dump(config, f, width=float("inf"))
+
+
+def canonical_float_format(number):
+    if number.is_integer():
+        return f"{number:.1f}"
+    else:
+        return str(number)
 
 
 def load_data_store(store_path):
@@ -932,8 +941,8 @@ def command_dispatch(arguments, config):
         if arguments.function:
             function = arguments.function
 
-        temperature=(
-            str(arguments.temperature)
+        temperature=canonical_float_format(
+            float(arguments.temperature)
             if arguments.temperature
             else config["default"]["temperature"]
         )

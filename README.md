@@ -214,7 +214,7 @@ To show the distribution of equivalence classes of outputs (across one or more m
 
 A distribution can be analyzed for a subset of data, and exported into a CSV file:
 
-    llm-play --distribution data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6
+    llm-play --distribution data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
              --output distribution.csv
 
 This will compute and visualise
