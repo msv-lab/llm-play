@@ -885,7 +885,6 @@ def command_dispatch(arguments, config):
 
     if arguments.map:
         json_data = load_data_store(Path(arguments.map))
-        print(json_data)
         stream = JSONDataStream(json_data)
         function=(
             arguments.function
