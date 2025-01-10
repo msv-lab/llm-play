@@ -741,33 +741,26 @@ def parse_args():
     )
     parser.add_argument("--map", type=str, help="Transform given data")
     parser.add_argument(
-        "--function", type=str, help="Data transformation shell command"
+        "--function", type=str, help="Builtin function or shell command"
     )
     parser.add_argument(
         "--extension", type=str, help="File extension for transformed data"
     )
     parser.add_argument("--answer", action="store_true", help="Extract answer")
     parser.add_argument("--code", action="store_true", help="Extract code")
-    parser.add_argument("--distribution", type=str, help="Show distribution of samples")
     parser.add_argument(
-        "--partition", type=str, help="Partition data into equivalence classes"
+        "--partition-local", type=str, help="Locally partition data into equivalence classes"
     )
     parser.add_argument(
-        "--relation", type=str, help="Equivalence relation shell command"
+        "--partition-global", type=str, help="Locally partition data into equivalence classes"
     )
     parser.add_argument(
-        "--equal", type=str, help="Check equivalence of data to the specified value"
+        "--relation", type=str, help="Builtin relation shell command"
     )
     parser.add_argument(
         "--predicate",
         action="store_true",
         help="Evaluate truthfulness of the predicate",
-    )
-    parser.add_argument(
-        "--diff", type=str, help="Compute difference between distributions"
-    )
-    parser.add_argument(
-        "--quiet", action="store_true", help="Do not print data on stdout"
     )
     parser.add_argument("--debug", action="store_true", help="Print logs on stderr")
     parser.add_argument("--version", action="store_true", help="Print version")
@@ -830,7 +823,7 @@ def configure(config):
             {
                 "type": "list",
                 "name": "relation",
-                "message": "Relation for --partition/--diff/--equal:",
+                "message": "Relation for --partition-{local,global}:",
                 "choices": config["relations"],
                 "default": config["default"]["relation"],
             },
@@ -875,17 +868,16 @@ def command_dispatch(arguments, config):
         bool(arguments.prompt),
         bool(arguments.distribution),
         bool(arguments.map),
-        bool(arguments.distribution),
-        bool(arguments.partition),
-        bool(arguments.diff),
+        bool(arguments.partition_local),
+        bool(arguments.partition_global),
     ]
 
     if (sum(conflicting_options) > 1):
         print("conflicting commands", file=sys.stderr)
         exit(1)
 
-    if (arguments.answer or arguments.code) and \
-       (arguments.distribution or arguments.partition or arguments.diff):
+    if ((arguments.answer or arguments.code) and \
+        (arguments.partition_local or arguments.partition_global)):
         print(
             "--answer/--code can only be used when sampling LLMs",
             file=sys.stderr,
@@ -902,11 +894,7 @@ def command_dispatch(arguments, config):
         )
         stream = Map(stream, function)
         consumers.append(get_stream_item_printer(stream))
-    elif arguments.partition:
-        pass
-    elif arguments.diff:
-        pass
-    elif arguments.distribution:
+    elif arguments.partition_global or arguments.partition_local:
         pass
     else:
         # sampling command

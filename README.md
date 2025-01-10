@@ -10,15 +10,11 @@ flowchart LR
     - Multiple samples`"] --> B["`**Data Transformation:**
     - Answer extraction
     - Code extraction
-    - Custom extractors
-    - Custom evaluators`"]
-    B --> C["`**Analysis:**
+    - Custom extractors`"]
+    B --> C["`**Data Analysis:**
     - Semantic partitioning
-    - Uncertainty measures
-    - Confidence measures
-    - Comparing distributions
-    - CSV/JSON export
-    `"]
+    - Logprob, token use, etc.
+    - CSV/JSON export`"]
 ```
 
 ## Installation
@@ -98,7 +94,7 @@ Multiple prompt files can be specified as inputs, e.g. using all `*.md` files in
 
     llm-play --prompt *.md --output samples
 
-When the argument of `--prompt` is a directory, all `*.md` files are loaded from this directory non-recursively.
+[WIP] When the argument of `--prompt` is a directory, all `*.md` files are loaded from this directory non-recursively.
 
 If the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its label. When a query is supplied through stdin or as a command-line argument, the label is empty.
 
@@ -118,7 +114,7 @@ Data transformation can be used, for example, to extract relevant information fr
 
 The above function searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
 
-By default, the extracted data is saved into "txt" files. The file extension can be specified using the `--extension` options, e.g. `--extension py` resulting in:
+[WIP] By default, the extracted data is saved into "txt" files. The file extension can be specified using the `--extension` options, e.g. `--extension py` resulting in:
 
     extracted
     └── qwen2.5-7b-instruct_1.0
@@ -168,15 +164,17 @@ is equivalent to
 
 ## Partitioning [WIP]
 
-By default, all responses are grouped into equivalence classes based on their syntactic identity. To ensure that responses are categorized without regard to trailing whitespace or differences in uppercase and lowercase characters, use the following command:
+Responses can be grouped into equivalence classes based on a specified binary relation. This partitioning can be either global - across all responses - using the command `--partition-global`, or local — restricted to responses associated with the same (model, prompt) pair — using the command `--partition-local`.
 
-    llm-play --partition responses \
+By default, after each operation, responses are globally grouped into equivalence classes based on their syntactic identity. The equivalence relation used for partitioning can be customized via the `--relation` option. For instance, to ensure responses are classified without regard to trailing whitespace or differences in letter case, the following command can be used:
+
+    llm-play --partition-local responses \
              --relation __TRIMMED_CASE_INSENSITIVE__ \
              --output classes
 
 Paritioning can be performed for a subset of data:
 
-    llm-play --partition data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
+    llm-play --partition-local data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
              --relation "$EQUIVALENCE" \
              --output classes
 
@@ -191,103 +189,25 @@ When using the filesystem tree format, the equivalence class identifiers will be
             ...
             └── 9_3.md
 
-The class identifiers are consistent only within samples for a single (model, prompt) pair. The classes are computed using [disjoint-set](https://en.wikipedia.org/wiki/Disjoint-set_data_structure).
-
-Equivalence relations can be composed by repeated partitioning:
-
-    llm-play --partition data --relation "$EQUIVALENCE1" --output classes1
-    llm-play --partition classes1 --relation "$EQUIVALENCE2" --output classes2
+When performing partitioning, existing equivalence classes are taken into account. Thus, applying a global partitioning to a locally partitioned data will produce inconsistent results.
 
 An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` weakens the criteria by ignoring trailing whitespaces and is not case sensitive.
 
-A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based `qwen2.5-7b-instruct`'s judgement:
+A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-7b-instruct` model:
 
     --relation "llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model qwen2.5-7b-instruct --predicate"
 
-The equivalence relation can be configured using the `-c` option to select a predefined equivalence command when using the options `--diff`, `--equal` or `--partition`. Paritioning can also be performed on-the-fly while sampling responses if an equivalence relation is specified explicitly with `--relation`.
+Additionally, the option `-c` can be used to select a predefined relation when using the options `--partition-local` or `--partition-global`.
 
-## Data Analysis [WIP]
+## Predicates [WIP]
 
-To show the distribution of equivalence classes of outputs (across one or more models and/or prompts), use the following command:
-
-    llm-play --distribution data
-
-A distribution can be analyzed for a subset of data, and exported into a CSV file:
-
-    llm-play --distribution data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
-             --output distribution.csv
-
-This will compute and visualise
-
-- [empirical probability](https://en.wikipedia.org/wiki/Empirical_probability) of equivalence classes;
-- semantic uncertainty (semantic entropy) computed over the equivalence classes
-
-Related work on semantic uncertainty:
-
-- Semantic Uncertainty: Linguistic Invariances for Uncertainty Estimation in Natural Language Generation<br>
-  Lorenz Kuhn, Yarin Gal, Sebastian Farquhar<br>
-  ICLR 2023
-
-Note that `--distribution` does not itself perform any data extraction or partitioning.
-
-### Comparing Distributions [WIP]
-
-To analyse the difference between empirical distributions of equivalence classes, e.g. for different model temperatures, use the following command:
-
-    llm-play --diff data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 data/qwen2.5-7b-instruct_0.5/a_4ae91f5bd6090fb6
-
-This command aligns the class labels between these two distributions w.r.t. the specified equivalence relation, as well as computes some useful statistics:
-
-- [Wasserstein metric](https://en.wikipedia.org/wiki/Wasserstein_metric)
-- [Permutation test](https://en.wikipedia.org/wiki/Permutation_test) based on the Wasserstein metric
-- [Jaccard index](https://en.wikipedia.org/wiki/Jaccard_index) over supports
-- Differences between supports
-
-The difference can be exported with `--output` into CSV format.
-
-### Confidence Measures [WIP]
-
-Compute the following confidence measure:
-
-- Average Token Probability
-- Generated Sequence Probability
-- Verbalized Self-Ask
-- Question Answering Logit
-
-Related work on LLM confidence:
-
-- Calibration and correctness of language models for code<br>
-  Claudio Spiess, David Gros, Kunal Suresh Pai, Michael Pradel, Md Rafiqul Islam Rabin, Amin Alipour, Susmit Jha, Prem Devanbu, Toufique Ahmed<br>
-  ICSE 2025
-
-## Evaluation [WIP]
-
-The samples or extracted data can be evaluated using function. This example evaluates whether each datum contains exactly one word:
-
-    llm-play --map data --function 'wc -w <<< %%ESCAPED_DATA%% | grep -q ^1$ && echo Yes || echo No'
-
-An equality evaluation function is provided for convenience. To evaluate data by checking if each datum is equal to a specific value, i.e. `Beijing`, use:
-
-    llm-play --map data --equal Beijing
-
-The evaluator `--equal VALUE` checks if the answer is equivalent to `VALUE` wrt the equivalence relations specified with `--relation` or the default one selected with `-c`. It will return either `Yes` or `No`.
-
-Evalation can be done for a subset of outputs:
-
-    llm-play --map data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 --equal Beijing
-
-### Predicates [WIP]
-
-Predicates are special one-the-fly boolean evaluators. For example, this command acts as a predicate over `$CITY`:
+Predicates are special one-the-fly boolean response evaluators. For example, this command acts as a predicate over `$CITY`:
 
     llm-play "Is $CITY the capital of China?" --predicate
 
 It is equivalent to the following:
 
-    if [ "$(llm-play "Is $CITY the capital of China? Respond Yes or No." \
-                    --answer \
-                    --equal Yes \
-                    --relation __TRIMMED_CASE_INSENSITIVE__)" = "Yes" ]; then
+    if [ "$(llm-play "Is $CITY the capital of China? Respond Yes or No." --answer)" = "Yes" ]; then
         exit 0
     else
         exit 1
@@ -337,8 +257,10 @@ The `ESCAPED_` variants are provided for the following variables:
 
 For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%RAW_DATA1%%` and `%%PROMPT_LABEL2%%`.
 
-## Other Options [WIP]
+## Other Options
 
-The option `--debug` prints detailed logs on stderr.
+[WIP] The option `--debug` prints detailed logs on stderr.
 
-The option `--quiet` disables all stdout output.
+The option `--version` prints the version and exits.
+
+The option `--help` prints help message and exits.
