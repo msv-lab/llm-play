@@ -104,6 +104,10 @@ If the query originates from a file, the prompt will adopt the file's name (excl
 
 In case of collisions, i.e. samples for the same (model, temperature, prompt) tuple already exist in the store, the prompt labels with matching hashes will be updated, and the old responses are removed.
 
+[WIP] Several outputs can be specified at the same time, e.g.
+
+    --output samples samples.json --update samples.csv
+
 ## Data Transformation
 
 Data transformation can be used, for example, to extract relevant information from the generated samples or from data extracted in earlier stages. This is to extract text within the tag `<answer> ... </answer>` from all samples in `samples`, and save the results into the directory `extracted`:
@@ -212,24 +216,23 @@ The predicate will terminate with the zero exit code iff it passes the evaluatio
 
 ## Data Formats [WIP]
 
-The supported data formats are
+Data can be written using the `--output` and `--update` options, or read using the `--map` and `--partition` options in the following three formats: `FS_TREE` (filesystem tree), `JSON` and `CSV`. The format is determined by the argument of the above options, which is treated as a directory path unless it ends with `.json` or `.csv`. Here is a comparison table between these formats.
 
-- Filesystem tree (FS-tree) designed for human readability
-- JSON files designed for easy storage and sharing
-- CSV files for evaluation
+|   | `FS_TREE` | `JSON` | `CSV` |
+| - | --------- | ------ | ----- |
+| Intended use | Manual inspection | Storage and sharing | Data analysis |
+| Store prompts? | Yes | Yes | No |
+| Store responses? | Yes | Yes | Truncated |
+| [WIP] Store metadata? | No | Yes | No |
 
-The argument of `--output` is treated as a directory path unless it ends with `.json` or `.csv`.
-
-FS-tree and JSON formats are interchangeble. They both can be used as outputs of LLM sampling, and as inputs or outputs of the `--map` and `--partition` commands. Only FS-tree and JSON can be updated with `--update`.
-
-FS-tree enables running commands for a subset of data, e.g.
+`FS_TREE` enables running commands for a subset of data, e.g.
 
     llm-play --partition data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
              --partitioning-mode local-union \
-             --relation "$EQUIVALENCE" \
+             --relation __TRIMMED_CASE_INSENSITIVE__ \
              --output classes
 
-The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate long data. If at least one datum is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`.
+When data exported into CSV is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`. After that, such a CSV cannot be used as an input to `--map` and `--partition`.
 
 To convert between different formats, a transfomtion with an identity function can used:
 
