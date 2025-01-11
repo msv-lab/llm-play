@@ -141,7 +141,7 @@ Answers can also be extracted by LLMs. For example, this function checks if a pr
 
 ### On-the-fly Transformation
 
-Data can be extracted on-the-fly while querying LLMs if `--function` is explicitly provided (not via `-c`):
+Data can be extracted on-the-fly while querying LLMs if `--function` is explicitly provided:
 
     llm-play "Name a city in China. Your answer should be formatted like **CITY NAME**" \
              --function "grep -o '\*\*[^*]*\*\*' %%ESCAPED_DATA_FILE%% | head -n 1 | sed 's/\*\*//g'"
@@ -162,42 +162,39 @@ is equivalent to
 
     llm-play "Write a Python function that computes the n-th Catalan number" --function __FIRST_MARKDOWN_CODE_BLOCK__
 
+In the on-the-fly mode, the transformation options selected with `-c` are ignored.
+
 ## Partitioning [WIP]
 
-Responses can be grouped into equivalence classes based on a specified binary relation. This partitioning can be either global - across all responses - using the command `--partition-global`, or local — restricted to responses associated with the same (model, prompt) pair — using the command `--partition-local`.
+Responses can be grouped into equivalence classes based on a specified binary relation using the command `--partition`. This partitioning can be either local — restricted to responses associated with the same (model, prompt) pair — using the option `--partition-mode local`, or global - across all responses - using the option `--partition-mode global`.
 
-By default, after each operation, responses are globally grouped into equivalence classes based on their syntactic identity. The equivalence relation used for partitioning can be customized via the `--relation` option. For instance, to ensure responses are classified without regard to trailing whitespace or differences in letter case, the following command can be used:
+The equivalence relation used for partitioning can be customized via the `--relation` option. An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` weakens the criteria by ignoring trailing whitespaces and is not case sensitive. For instance, to group responses locally without regard to trailing whitespace or differences in letter case, the following command can be used:
 
-    llm-play --partition-local responses \
+    llm-play --partition responses \
+             --partition-mode local \
              --relation __TRIMMED_CASE_INSENSITIVE__ \
+             --relation-compose merge \
              --output classes
-
-Paritioning can be performed for a subset of data:
-
-    llm-play --partition-local data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
-             --relation "$EQUIVALENCE" \
-             --output classes
-
-When using the filesystem tree format, the equivalence class identifiers will be added to the end of output file names, after the underscore:
-
-    classes
-    └── qwen2.5-7b-instruct_1.0
-        ├── _4ae91f5bd6090fb6.md
-        └── _4ae91f5bd6090fb6
-            ├── 0_0.md
-            ├── 1_0.md
-            ...
-            └── 9_3.md
-
-When performing partitioning, existing equivalence classes are taken into account. Thus, applying a global partitioning to a locally partitioned data will produce inconsistent results.
-
-An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` weakens the criteria by ignoring trailing whitespaces and is not case sensitive.
 
 A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-7b-instruct` model:
 
     --relation "llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model qwen2.5-7b-instruct --predicate"
 
-Additionally, the option `-c` can be used to select a predefined relation when using the options `--partition-local` or `--partition-global`.
+When performing partitioning, the specified relation is composed with existing partitions in one of the following ways:
+
+- `--relation-compose merge` computes the transtitive closure of the union of two relations.
+- `--relation-compose intersect` computes the intersection of two equivalence relations.
+- `--relation-compose override` uses only the second relation, ignoring the original one.
+
+When performing global partitioning of locally partitioned data, the option `--relation-compose override` must be used to obtain consistent equivalent classes.
+
+Additionally, the option `-c` can be used to select a predefined relation and partitioning settings when using the option `--partition`.
+
+Partitioning is performed on-the-fly during LLM sampling and data transformation. The following options are used by default:
+
+    --partition-mode global --relation __ID__ --relation-compose merge
+
+In the on-the-fly mode, partitioning options selected with `-c` are ignored.
 
 ## Predicates [WIP]
 
@@ -226,6 +223,12 @@ The supported data formats are
 The argument of `--output` is treated as a directory path unless it ends with `.json` or `.csv`.
 
 FS-tree and JSON formats are interchangeble. They both can be used as outputs of LLM sampling, and as inputs or outputs of the `--map` and `--partition` commands. Only FS-tree and JSON can be updated with `--update`.
+
+FS-tree enables running commands for a subset of data, e.g.
+
+    llm-play --partition-locally data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
+             --relation "$EQUIVALENCE" \
+             --output classes
 
 CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as an alternative output format for `--map` and `--partition`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate long data. If at least one datum is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`. Different commands, e.g. `--distribution` and `--diff`, produce different CSV schemas.
 
