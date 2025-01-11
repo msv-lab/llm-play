@@ -37,7 +37,7 @@ An LLM can be queried via an argument, a specified prompt file, or stdin:
 
 The argument and the file options are mutually-exclusive. They both take precedence over stdin.
 
-In either of these options, the response is printed on stdout, and can be redirected to a file:
+In all these cases, the response is printed on stdout, and can be redirected to a file:
 
     llm-play "What is the capital of China?" > output.md
 
@@ -49,7 +49,7 @@ Command-line options take precedence over the default settings.
 
 ## Batch Processing
 
-When either the number of models or prompts or responses is greater than one, the tool operates in batch mode. For example, to sample 10 responses from two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, use the command:
+When the number of models or prompts or responses exceeds one, the tool operates in batch mode. For example, to sample 10 responses from two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, use the command:
 
     llm-play --prompt prompts/question1.md \
              --model qwen2.5-72b-instruct qwen2.5-7b-instruct \
@@ -127,7 +127,7 @@ The above function searches for text wrapped within `<answer>` and `</answer>` t
 
 ### Functions
 
-Transformation is performed by either builtin functions or shell commands. The builtin function `__ID__` simply returns the entire string without modification. The builtin function `__FIRST_TAGGED_ANSWER__` returns the first occurence of a string wrapped into the tag `<answer></answer>`. The builtin function `__FIRST_MARKDOWN_CODE_BLOCK__` extract the content of the first markdown block.
+Transformation is performed by either builtin functions or shell commands. The builtin function `__ID__` simply returns the entire string without modification. The builtin function `__FIRST_TAGGED_ANSWER__` returns the first occurence of a string wrapped into the tag `<answer></answer>`. The builtin function `__FIRST_MARKDOWN_CODE_BLOCK__` extract the content of the first Markdown code block.
 
 Function defined through shell commands should use the [shell template language](#shell-template-language). For example, this is to count the number of characters in each sample:
 
@@ -162,37 +162,37 @@ is equivalent to
 
     llm-play "Write a Python function that computes the n-th Catalan number" --function __FIRST_MARKDOWN_CODE_BLOCK__
 
-In the on-the-fly mode, the transformation options selected with `-c` are ignored.
+In on-the-fly mode, the transformation options selected with `-c` are ignored.
 
 ## Partitioning [WIP]
 
-Responses can be grouped into equivalence classes based on a specified binary relation using the command `--partition`. The equivalence relation used for partitioning can be customized via the `--relation` option. An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` weakens the criteria by ignoring trailing whitespaces and is not case sensitive. A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-7b-instruct` model:
+Responses can be grouped into equivalence classes based on a specified binary relation using the command `--partition`. The equivalence relation used for partitioning can be customized via the `--relation` option. An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` weakens this criterion by ignoring trailing whitespaces and is case-insensitive. A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-7b-instruct` model:
 
     --relation "llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model qwen2.5-7b-instruct --predicate"
 
 When performing partitioning, the `--partitioning-mode` needs to be specified:
 
-- `local-merge` computes the transtitive closure of the union of the specified relation and existing relation across responses associated with the same (model, prompt) pair.
-- `global-merge` is the same as `local-merge`, but across all responses.
-- `local-intersection` computes the intersection of the specified relation and existing relation across responses associated with the same (model, prompt) pair.
+- `local-union` computes the transtitive closure of the union of the specified relation and the existing relation across responses associated with the same (model, prompt) pair.
+- `global-union` is the same as `local-union`, but across all responses.
+- `local-intersection` computes the intersection of the specified relation and the existing relation across responses associated with the same (model, prompt) pair.
 - `global-intersection` is the same as `local-intersection`, but across all responses.
-- `local-override` uses only the specified relation, ignoring the original one, across responses associated with the same (model, prompt) pair.
+- `local-override` uses only the specified relation, ignoring the existing one, across responses associated with the same (model, prompt) pair.
 - `global-override` is the same as `local-override`, but across all responses.
 
 For instance, to group responses locally without regard to trailing whitespace or differences in letter case, the following command can be used:
 
     llm-play --partition responses \
-             --partitioning-mode local-merge \
+             --partitioning-mode local-union \
              --relation __TRIMMED_CASE_INSENSITIVE__ \
              --output classes
 
 When performing global partitioning of locally partitioned data, the option `--partitioning-mode global-override` must be used to obtain consistent equivalent classes.
 
-Additionally, the option `-c` can be used to select a predefined relation and partitioning settings when using the option `--partition`.
+Additionally, the option `-c` can be used to select a predefined relation and a partitioning mode when using the option `--partition`.
 
 Partitioning is performed on-the-fly during LLM sampling and data transformation. The following options are used by default (the options selected with `-c` is ignored):
 
-    --relation __ID__ --partitioning-mode global-merge
+    --relation __ID__ --partitioning-mode global-union
 
 ## Predicates [WIP]
 
@@ -225,7 +225,7 @@ FS-tree and JSON formats are interchangeble. They both can be used as outputs of
 FS-tree enables running commands for a subset of data, e.g.
 
     llm-play --partition data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
-             --partitioning-mode local-merge \
+             --partitioning-mode local-union \
              --relation "$EQUIVALENCE" \
              --output classes
 

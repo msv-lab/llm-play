@@ -17,6 +17,7 @@
 
 from dataclasses import dataclass
 from typing import Dict, Tuple, List
+from enum import StrEnum, Enum, auto
 
 import shlex
 import os
@@ -58,6 +59,7 @@ default:
   temperature: 1.0
   function: __ID__
   relation: __ID__
+  partitioning_mode: global-merge
 providers:
   Aliyun:
     API: OpenAI
@@ -232,6 +234,48 @@ class StreamItem:
     distribution: Distribution
     prompt: Prompt
     sample: Sample
+
+
+class StoreType(Enum):
+    FS_TREE = auto()
+    JSON = auto()
+    CSV = auto()
+
+
+@dataclass
+class Store:
+    type: StoreType
+    path: Path
+
+    @staticmethod
+    def detect(path):
+        if path.suffix == 'json':
+            return Store(type=StoreType.JSON, path=path)
+        if path.suffix == 'csv':
+            return Store(type=StoreType.CSV, path=path)
+        return Store(type=StoreType.FS_TREE, path=path)
+
+
+class PartitioningScope(StrEnum):
+    GLOBAL = "global"
+    LOCAL = "local"
+
+
+class RelationComposition(StrEnum):
+    MERGE = "union"
+    INTERSECTION = "intersection"
+    OVERRIDE = "override"
+
+
+@dataclass
+class PartitioningMode:
+    scope: PartitioningScope
+    composition: RelationComposition
+
+    @staticmethod
+    def parse(mode):
+        s, c = mode.split('-')
+        return PartitioningMode(PartitioningScope(s), RelationComposition(c))
 
 
 def stream_item_table_format(max_model_name_len, max_prompt_label_len):
@@ -749,10 +793,10 @@ def parse_args():
     parser.add_argument("--answer", action="store_true", help="Extract answer")
     parser.add_argument("--code", action="store_true", help="Extract code")
     parser.add_argument(
-        "--partition-local", type=str, help="Locally partition data into equivalence classes"
+        "--partition", type=str, help="Locally partition data into equivalence classes"
     )
     parser.add_argument(
-        "--partition-global", type=str, help="Locally partition data into equivalence classes"
+        "--partitioning-mode", type=str, help="Partitioning mode"
     )
     parser.add_argument(
         "--relation", type=str, help="Builtin relation shell command"
@@ -823,9 +867,23 @@ def configure(config):
             {
                 "type": "list",
                 "name": "relation",
-                "message": "Relation for --partition-{local,global}:",
+                "message": "Relation for --partition:",
                 "choices": config["relations"],
                 "default": config["default"]["relation"],
+            },
+            {
+                "type": "list",
+                "name": "relation",
+                "message": "Partitioning mode:",
+                "choices": [
+                    "global-merge",
+                    "local-merge",
+                    "global-intersection",
+                    "local-intersection",
+                    "global-override",
+                    "local-override"
+                ],
+                "default": config["default"]["partitioning_mode"],
             },
         ]
     )
@@ -866,18 +924,15 @@ def command_dispatch(arguments, config):
     conflicting_options = [
         bool(arguments.query),
         bool(arguments.prompt),
-        bool(arguments.distribution),
         bool(arguments.map),
-        bool(arguments.partition_local),
-        bool(arguments.partition_global),
+        bool(arguments.partition),
     ]
 
     if (sum(conflicting_options) > 1):
         print("conflicting commands", file=sys.stderr)
         exit(1)
 
-    if ((arguments.answer or arguments.code) and \
-        (arguments.partition_local or arguments.partition_global)):
+    if ((arguments.answer or arguments.code) and arguments.partition):
         print(
             "--answer/--code can only be used when sampling LLMs",
             file=sys.stderr,
@@ -894,7 +949,7 @@ def command_dispatch(arguments, config):
         )
         stream = Map(stream, function)
         consumers.append(get_stream_item_printer(stream))
-    elif arguments.partition_global or arguments.partition_local:
+    elif arguments.partition:
         pass
     else:
         # sampling command
