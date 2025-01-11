@@ -13,7 +13,7 @@ flowchart LR
     - Custom extractors`"]
     B --> C["`**Data Analysis:**
     - Semantic partitioning
-    - Logprob, token use, etc.
+    - Custom evaluators
     - CSV/JSON export`"]
 ```
 
@@ -166,35 +166,33 @@ In the on-the-fly mode, the transformation options selected with `-c` are ignore
 
 ## Partitioning [WIP]
 
-Responses can be grouped into equivalence classes based on a specified binary relation using the command `--partition`. This partitioning can be either local — restricted to responses associated with the same (model, prompt) pair — using the option `--partition-mode local`, or global - across all responses - using the option `--partition-mode global`.
-
-The equivalence relation used for partitioning can be customized via the `--relation` option. An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` weakens the criteria by ignoring trailing whitespaces and is not case sensitive. For instance, to group responses locally without regard to trailing whitespace or differences in letter case, the following command can be used:
-
-    llm-play --partition responses \
-             --partition-mode local \
-             --relation __TRIMMED_CASE_INSENSITIVE__ \
-             --relation-compose merge \
-             --output classes
-
-A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-7b-instruct` model:
+Responses can be grouped into equivalence classes based on a specified binary relation using the command `--partition`. The equivalence relation used for partitioning can be customized via the `--relation` option. An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` weakens the criteria by ignoring trailing whitespaces and is not case sensitive. A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-7b-instruct` model:
 
     --relation "llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model qwen2.5-7b-instruct --predicate"
 
-When performing partitioning, the specified relation is composed with existing partitions in one of the following ways:
+When performing partitioning, the `--partitioning-mode` needs to be specified:
 
-- `--relation-compose merge` computes the transtitive closure of the union of two relations.
-- `--relation-compose intersect` computes the intersection of two equivalence relations.
-- `--relation-compose override` uses only the second relation, ignoring the original one.
+- `local-merge` computes the transtitive closure of the union of the specified relation and existing relation across responses associated with the same (model, prompt) pair.
+- `global-merge` is the same as `local-merge`, but across all responses.
+- `local-intersection` computes the intersection of the specified relation and existing relation across responses associated with the same (model, prompt) pair.
+- `global-intersection` is the same as `local-intersection`, but across all responses.
+- `local-override` uses only the specified relation, ignoring the original one, across responses associated with the same (model, prompt) pair.
+- `global-override` is the same as `local-override`, but across all responses.
 
-When performing global partitioning of locally partitioned data, the option `--relation-compose override` must be used to obtain consistent equivalent classes.
+For instance, to group responses locally without regard to trailing whitespace or differences in letter case, the following command can be used:
+
+    llm-play --partition responses \
+             --partitioning-mode local-merge \
+             --relation __TRIMMED_CASE_INSENSITIVE__ \
+             --output classes
+
+When performing global partitioning of locally partitioned data, the option `--partitioning-mode global-override` must be used to obtain consistent equivalent classes.
 
 Additionally, the option `-c` can be used to select a predefined relation and partitioning settings when using the option `--partition`.
 
-Partitioning is performed on-the-fly during LLM sampling and data transformation. The following options are used by default:
+Partitioning is performed on-the-fly during LLM sampling and data transformation. The following options are used by default (the options selected with `-c` is ignored):
 
-    --partition-mode global --relation __ID__ --relation-compose merge
-
-In the on-the-fly mode, partitioning options selected with `-c` are ignored.
+    --relation __ID__ --partitioning-mode global-merge
 
 ## Predicates [WIP]
 
@@ -226,16 +224,16 @@ FS-tree and JSON formats are interchangeble. They both can be used as outputs of
 
 FS-tree enables running commands for a subset of data, e.g.
 
-    llm-play --partition-locally data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
+    llm-play --partition data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
+             --partitioning-mode local-merge \
              --relation "$EQUIVALENCE" \
              --output classes
 
-CSV format is used as the only supported output format for `--diff`, `--distrubiton`, and as an alternative output format for `--map` and `--partition`. The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate long data. If at least one datum is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`. Different commands, e.g. `--distribution` and `--diff`, produce different CSV schemas.
+The CSV encoding is lossy: the data cannot be loaded back from a CSV file, as it does not save prompts, and truncate long data. If at least one datum is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`.
 
-The identity function can be used to convert data between different formats, e.g.
+To convert between different formats, a transfomtion with an identity function can used:
 
-    llm-play --map data --function __ID__ --output data.json
-    llm-play --map data.json --function __ID__ --output data.csv
+    llm-play --map data --function __ID__ --relation __ID__ --output data.json
 
 ## Shell Template Language
 
