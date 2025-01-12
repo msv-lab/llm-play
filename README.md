@@ -17,6 +17,17 @@ flowchart LR
     - CSV/JSON export`"]
 ```
 
+Technically, it generates, transforms, partitions, displays and stores a stream of tuples
+
+1. Model
+2. Temperature
+3. Prompt Label
+4. Prompt Hash
+5. Prompt Content
+6. Sample ID
+7. Sample Equivalence Class
+8. Sample Content
+
 ## Installation
 
 Set some of the following API keys as environment variables, depending on the services you plan to use:
@@ -58,14 +69,14 @@ When the number of models or prompts or responses exceeds one, the tool operates
 
 In batch mode, a short summary of responses will be printed on stdout:
 
-    Model                │ Temp. │ Label     │ Hash       │ Sample │ Class │ Content
-    ─────────────────────┼───────┼───────────┼────────────┼────────┼───────┼────────
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      0 │     0 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      1 │     1 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      2 │     2 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      3 │     3 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      4 │     4 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      5 │     5 │ "It ...
+    Model                │ Temp. │ P. Label  │ P. Hash    │ S. ID  │ S. Class │ S. Content
+    ─────────────────────┼───────┼───────────┼────────────┼────────┼──────────┼───────────
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      0 │        0 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      1 │        1 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      2 │        2 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      3 │        3 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      4 │        4 │ "It ...
+    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │      5 │        5 │ "It ...
     ...
 
 In this table, `question1` is the prompt label, `4ae91f5bd6090fb6` is its SHAKE128 length=8 hash. Prompts with repeating hashes are skipped.  The `Class` column displays the IDs of equivalence classes of responses. Please see [Partitioning](#partitioning) for details.
@@ -172,7 +183,7 @@ In on-the-fly mode, the transformation options selected with `-c` are ignored.
 
 Responses can be grouped into equivalence classes based on a specified binary relation using the command `--partition`. The equivalence relation used for partitioning can be customized via the `--relation` option. An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` weakens this criterion by ignoring trailing whitespaces and is case-insensitive. A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-7b-instruct` model:
 
-    --relation "llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model qwen2.5-7b-instruct --predicate"
+    --relation "llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <answer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model qwen2.5-7b-instruct --predicate"
 
 When performing partitioning, the `--partitioning-mode` needs to be specified:
 
@@ -221,7 +232,7 @@ Data can be written using the `--output` and `--update` options, or read using t
 |   | `FS_TREE` | `JSON` | `CSV` |
 | - | --------- | ------ | ----- |
 | Intended use | Manual inspection | Storage and sharing | Data analysis |
-| Store prompts? | Yes | Yes | No |
+| Store prompts? | Yes | Yes | Truncated |
 | Store responses? | Yes | Yes | Truncated |
 | [WIP] Store metadata? | No | Yes | No |
 
@@ -232,9 +243,9 @@ Data can be written using the `--output` and `--update` options, or read using t
              --relation __TRIMMED_CASE_INSENSITIVE__ \
              --output classes
 
-When data exported into CSV is truncated, the corresponding column name is changed from `Content` to `Content [Truncated]`. After that, such a CSV cannot be used as an input to `--map` and `--partition`.
+When data exported into CSV is truncated, the corresponding column name is changed from `Sample Content` to `Sample Content [Truncated]`. A CSV with `Sample Content [Truncated]` cannot be used as an input to `--map` and `--partition`.
 
-To convert between different formats, a transfomtion with an identity function can used:
+To convert between different formats, a transformation with an identity function can used:
 
     llm-play --map data --function __ID__ --relation __ID__ --output data.json
 
