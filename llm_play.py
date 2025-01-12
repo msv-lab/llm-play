@@ -17,7 +17,7 @@
 
 from dataclasses import dataclass
 from typing import Dict, Tuple, List
-from enum import StrEnum, Enum, auto
+from enum import Enum, auto
 
 import shlex
 import os
@@ -60,7 +60,6 @@ default:
   temperature: 1.0
   function: __ID__
   relation: __ID__
-  partitioning_mode: global-merge
 providers:
   Aliyun:
     API: OpenAI
@@ -172,15 +171,12 @@ BUILTIN_FUNCTIONS = {
     )
 }
 
-RELATION_POSITIVE = "Yes"
-RELATION_NEGATIVE = "No"
-
 BUILTIN_RELATIONS = {
     "__ID__": (
-        lambda x, y: RELATION_POSITIVE if x == y else RELATION_NEGATIVE
+        lambda x, y: x == y
     ),
     "__TRIMMED_CASE_INSENSITIVE__": (
-        lambda x, y: RELATION_POSITIVE if x.strip().lower() == y.strip().lower() else RELATION_NEGATIVE
+        lambda x, y: x.strip().lower() == y.strip().lower()
     )
 }
 
@@ -543,26 +539,10 @@ class Store:
                 for row in self.rows:
                     writer.writerow(row)
 
-class PartitioningScope(StrEnum):
-    GLOBAL = "global"
-    LOCAL = "local"
 
-
-class RelationComposition(StrEnum):
-    MERGE = "union"
-    INTERSECTION = "intersection"
-    OVERRIDE = "override"
-
-
-@dataclass
-class PartitioningMode:
-    scope: PartitioningScope
-    composition: RelationComposition
-
-    @staticmethod
-    def parse(mode):
-        s, c = mode.split('-')
-        return PartitioningMode(PartitioningScope(s), RelationComposition(c))
+class PartitioningMode(Enum):
+    GLOBAL = auto()
+    LOCAL = auto()
 
 
 def stream_item_table_format(max_model_name_len, max_prompt_label_len):
@@ -646,7 +626,7 @@ class LLMSampleStream:
         )
 
     def next_batch(self):
-        return self.current_index > 0 and len(self.current_sample_index) == 0
+        return self.current_sample_index == 0
 
     def table_format(self):
         return self._table_format
@@ -678,7 +658,7 @@ def stream_response_to_stdout(prompt, model, temperature, config):
 class JSONDataStream:
     def __init__(self, json_data):
         self.current_item_index = 0
-        self._next_batch = False
+        self._next_batch = True
         max_model_name_len = 0
         max_prompt_label_len = 0
         self.cache = deque()
@@ -732,31 +712,31 @@ class Map:
     def __iter__(self):
         return self
 
-    def _call_shell_function(self, sample, prompt, function):
-        with tempfile.NamedTemporaryFile() as prompt_file:
+    def _call_shell_function(self, function, prompt, sample):
+        with tempfile.NamedTemporaryFile() as prompt_file, \
+             tempfile.NamedTemporaryFile() as data_file:
             prompt_file.write(prompt.content.encode())
             prompt_file.flush()
-            with tempfile.NamedTemporaryFile() as data_file:
-                data_file.write(sample.encode())
-                data_file.flush()
-                cmd = instantiate_shell_template(
-                    function,
-                    prompts=[prompt],
-                    prompt_files=[prompt_file.name],
-                    data=[sample],
-                    data_files=[data_file.name],
-                )
-                result = subprocess.run(
-                    cmd,
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                )
-                if result.returncode == 0:
-                    return FunctionSuccess(result.stdout)
-                else:
-                    return FUNCTION_FAILURE
+            data_file.write(sample.content.encode())
+            data_file.flush()
+            cmd = instantiate_shell_template(
+                function,
+                prompts=[prompt],
+                prompt_files=[prompt_file.name],
+                data=[sample.content],
+                data_files=[data_file.name],
+            )
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            if result.returncode == 0:
+                return FunctionSuccess(result.stdout)
+            else:
+                return FUNCTION_FAILURE
 
     def __next__(self):
         while True:
@@ -764,7 +744,7 @@ class Map:
             if self.function in BUILTIN_FUNCTIONS:
                 result = BUILTIN_FUNCTIONS[self.function](i.sample.content)
             else:
-                result = self._call_shell_function(i.sample.content, i.prompt, self.function)
+                result = self._call_shell_function(self.function, i.prompt, i.sample)
             if result == FUNCTION_FAILURE:
                 continue
             return StreamItem(
@@ -776,7 +756,93 @@ class Map:
             )
 
     def next_batch(self):
-        return self.stream.next_batch
+        return self.stream.next_batch()
+
+    def table_format(self):
+        return self.stream.table_format()
+
+    def __len__(self):
+        return len(self.stream)
+
+
+class Partition:
+    def __init__(self, stream, relation, mode):
+        self.stream = stream
+        self.relation = relation
+        self.mode = mode
+        self._reset_classes()
+
+    def _reset_classes(self):
+        self._next_class = 0
+        self._classes = dict()
+
+    def _add_new_class(self, prompt, sample):
+        new_class = self._next_class
+        self._classes[new_class] = (prompt, sample)
+        self._next_class += 1
+        return new_class
+
+    def __iter__(self):
+        return self
+
+    def _call_shell_relation(self, relation, prompt1, prompt2, sample1, sample2):
+        with tempfile.NamedTemporaryFile() as prompt_file1, \
+             tempfile.NamedTemporaryFile() as prompt_file2, \
+             tempfile.NamedTemporaryFile() as data_file1, \
+             tempfile.NamedTemporaryFile() as data_file2 :
+            prompt_file1.write(prompt1.content.encode())
+            prompt_file1.flush()
+            prompt_file2.write(prompt2.content.encode())
+            prompt_file2.flush()
+            data_file1.write(sample1.encode())
+            data_file1.flush()
+            data_file2.write(sample2.encode())
+            data_file2.flush()
+            cmd = instantiate_shell_template(
+                relation,
+                prompts=[prompt1, prompt2],
+                prompt_files=[prompt_file1.name, prompt_file2.name],
+                data=[sample1, sample2],
+                data_files=[data_file1.name, data_file2.name],
+            )
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            return result.returncode == 0
+
+    def __next__(self):
+        if self.mode == PartitioningMode.LOCAL and self.stream.next_batch():
+            self._reset_classes()
+        i = next(self.stream)
+        class_id = None
+        for id, (prompt, sample) in self._classes.items():
+            if i.sample.content == sample.content:
+                class_id = id
+                break
+            if self.relation != '__ID__':
+                if self.relation in BUILTIN_RELATION:
+                    if BUILTIN_FUNCTIONS[self.relation](i.sample.content, sample.content):
+                        class_id = id
+                        break
+                else:
+                    if self._call_shell_relation(self.relation, i.prompt, prompt, i.sample, sample):
+                        class_id = id
+                        break
+        if class_id == None:
+            class_id = self._add_new_class(i.prompt, i.sample)
+        return StreamItem(
+            distribution=i.distribution,
+            prompt=i.prompt,
+            sample=Sample(id=i.sample.id,
+                          class_id=class_id,
+                          content=i.sample.content)
+        )
+
+    def next_batch(self):
+        return self.stream.next_batch()
 
     def table_format(self):
         return self.stream.table_format()
@@ -867,7 +933,6 @@ class TablePrinter:
         fixed_widths = [w[1] for w in column_specs if w[1] is not None]
         fixed_total = sum(fixed_widths) + (num_columns - 1) * 3
         flexible_columns = len([c for c in column_specs if c[1] is None])
-        # TODO what if overflow?
         if flexible_columns > 0:
             available_width = max(terminal_width - fixed_total, 0)
             flexible_width = available_width // flexible_columns
@@ -903,7 +968,6 @@ class TablePrinter:
     def _wc_ljust(self, text, length, padding=' '):
         return text + padding * max(0, (length - wcswidth(text)))
 
-    # TODO: test with narrow screens and empty responses
     def print_row(self, row):
         formatted_row = []
         for i, cell in enumerate(row):
@@ -939,10 +1003,10 @@ def parse_args():
     parser.add_argument("--answer", action="store_true", help="Extract answer")
     parser.add_argument("--code", action="store_true", help="Extract code")
     parser.add_argument(
-        "--partition", type=str, help="Locally partition data into equivalence classes"
+        "--partition-locally", type=str, help="Locally partition data into equivalence classes"
     )
     parser.add_argument(
-        "--partitioning-mode", type=str, help="Partitioning mode"
+        "--partition-globally", type=str, help="Globally partition data into equivalence classes"
     )
     parser.add_argument(
         "--relation", type=str, help="Builtin relation shell command"
@@ -1013,23 +1077,9 @@ def configure(config):
             {
                 "type": "list",
                 "name": "relation",
-                "message": "Relation for --partition:",
+                "message": "Relation for --partition-*:",
                 "choices": config["relations"],
                 "default": config["default"]["relation"],
-            },
-            {
-                "type": "list",
-                "name": "relation",
-                "message": "Partitioning mode:",
-                "choices": [
-                    "global-merge",
-                    "local-merge",
-                    "global-intersection",
-                    "local-intersection",
-                    "global-override",
-                    "local-override"
-                ],
-                "default": config["default"]["partitioning_mode"],
             },
         ]
     )
@@ -1068,14 +1118,16 @@ def command_dispatch(arguments, config):
         bool(arguments.query),
         bool(arguments.prompt),
         bool(arguments.map),
-        bool(arguments.partition),
+        bool(arguments.partition_locally),
+        bool(arguments.partition_globally),
     ]
 
     if (sum(conflicting_options) > 1):
         print("conflicting commands", file=sys.stderr)
         exit(1)
 
-    if ((arguments.answer or arguments.code) and arguments.partition):
+    if ((arguments.answer or arguments.code) and
+        (arguments.partition_globally or arguments.partition_locally)):
         print(
             "--answer/--code can only be used when sampling LLMs",
             file=sys.stderr,
@@ -1085,15 +1137,28 @@ def command_dispatch(arguments, config):
     if arguments.map:
         store = Store.detect(Path(arguments.map))
         stream = JSONDataStream(store.load())
-        function=(
+        function = (
             arguments.function
             if arguments.function
             else config["default"]["function"]
         )
         stream = Map(stream, function)
         consumers.append(StreamItemPrinter(stream))
-    elif arguments.partition:
-        pass
+    elif arguments.partition_globally or arguments.partition_locally:
+        if arguments.partition_globally:
+            store = Store.detect(Path(arguments.partition_globally))
+            mode = PartitioningMode.GLOBAL
+        else:
+            store = Store.detect(Path(arguments.partition_locally))
+            mode = PartitioningMode.LOCAL
+        stream = JSONDataStream(store.load())
+        relation = (
+            arguments.relation
+            if arguments.relation
+            else config["default"]["relation"]
+        )
+        stream = Partition(stream, relation, mode)
+        consumers.append(StreamItemPrinter(stream))
     else:
         # sampling command
 
@@ -1160,6 +1225,7 @@ def command_dispatch(arguments, config):
             stream = LLMSampleStream(query, config)
             if function != '__ID__':
                  stream = Map(stream, function)
+            stream = Partition(stream, '__ID__', PartitioningMode.GLOBAL)
             if (
                 len(query.prompts) * len(query.distributions) * query.num_samples == 1
             ):

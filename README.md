@@ -179,35 +179,23 @@ is equivalent to
 
 In on-the-fly mode, the transformation options selected with `-c` are ignored.
 
-## Partitioning [WIP]
+## Partitioning
 
-Responses can be grouped into equivalence classes based on a specified binary relation using the command `--partition`. The equivalence relation used for partitioning can be customized via the `--relation` option. An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` weakens this criterion by ignoring trailing whitespaces and is case-insensitive. A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-7b-instruct` model:
+Responses can be grouped into equivalence classes based on a specified binary relation. The equivalence relation used for partitioning can be customized via the option `--relation`. An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` ignores trailing whitespaces and is case-insensitive. A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-7b-instruct` model:
 
     --relation "llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <answer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model qwen2.5-7b-instruct --predicate"
 
-When performing partitioning, the `--partitioning-mode` needs to be specified:
+Paritioning can be performed either locally - for responses associated with the same (model, prompt) pair - using the option  `--partition-locally`, or globally - across all responses - using the option `--partition-globally`. For example, this is to partition using a custom relation defined in a Python script:
 
-- `local-union` computes the transtitive closure of the union of the specified relation and the existing relation across responses associated with the same (model, prompt) pair.
-- `global-union` is the same as `local-union`, but across all responses.
-- `local-intersection` computes the intersection of the specified relation and the existing relation across responses associated with the same (model, prompt) pair.
-- `global-intersection` is the same as `local-intersection`, but across all responses.
-- `local-override` uses only the specified relation, ignoring the existing one, across responses associated with the same (model, prompt) pair.
-- `global-override` is the same as `local-override`, but across all responses.
-
-For instance, to group responses locally without regard to trailing whitespace or differences in letter case, the following command can be used:
-
-    llm-play --partition responses \
-             --partitioning-mode local-union \
-             --relation __TRIMMED_CASE_INSENSITIVE__ \
+    llm-play --partition-globally data \
+             --relation `python custom_equivalence.py %%ESCAPED_DATA_FILE1%% %%ESCAPED_DATA_FILE2%%` \
              --output classes
 
-When performing global partitioning of locally partitioned data, the option `--partitioning-mode global-override` must be used to obtain consistent equivalent classes.
+When partitioning is performed, the existing equivalence classes are ignored.
 
-Additionally, the option `-c` can be used to select a predefined relation and a partitioning mode when using the option `--partition`.
+Additionally, the option `-c` can be used to select a predefined relation when using the options `--partition-*`.
 
-Partitioning is performed on-the-fly during LLM sampling and data transformation. The following options are used by default (the options selected with `-c` is ignored):
-
-    --relation __ID__ --partitioning-mode global-union
+A global partitioning w.r.t. the relation `__ID__` is performed on-the-fly during LLM sampling.
 
 ## Predicates [WIP]
 
@@ -215,7 +203,7 @@ Predicates are special one-the-fly boolean response evaluators. For example, thi
 
     llm-play "Is $CITY the capital of China?" --predicate
 
-It is equivalent to the following:
+It is equivalent to the following (plus, the comparision is performed using `__TRIMMED_CASE_INSENSITIVE__)`:
 
     if [ "$(llm-play "Is $CITY the capital of China? Respond Yes or No." --answer)" = "Yes" ]; then
         exit 0
@@ -227,7 +215,7 @@ The predicate will terminate with the zero exit code iff it passes the evaluatio
 
 ## Data Formats
 
-Data can be written using the `--output` and `--update` options, or read using the `--map` and `--partition` options in the following three formats: `FS_TREE` (filesystem tree), `JSON` and `CSV`. The format is determined by the argument of the above options, which is treated as a directory path unless it ends with `.json` or `.csv`. Here is a comparison table between these formats.
+Data can be written using the `--output` and `--update` options, or read using the `--map` and `--partition-*` options in the following three formats: `FS_TREE` (filesystem tree), `JSON` and `CSV`. The format is determined by the argument of the above options, which is treated as a directory path unless it ends with `.json` or `.csv`. Here is a comparison table between these formats.
 
 |   | `FS_TREE` | `JSON` | `CSV` |
 | - | --------- | ------ | ----- |
@@ -238,12 +226,11 @@ Data can be written using the `--output` and `--update` options, or read using t
 
 `FS_TREE` enables running commands for a subset of data, e.g.
 
-    llm-play --partition data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
-             --partitioning-mode local-union \
+    llm-play --partition-locally data/qwen2.5-7b-instruct_1.0/a_4ae91f5bd6090fb6 \
              --relation __TRIMMED_CASE_INSENSITIVE__ \
              --output classes
 
-When data exported into CSV is truncated, the corresponding column name is changed from `Sample Content` to `Sample Content [Truncated]`. A CSV with `Sample Content [Truncated]` cannot be used as an input to `--map` and `--partition`.
+When data exported into CSV is truncated, the corresponding column name is changed from `Sample Content` to `Sample Content [Truncated]`. A CSV with `Sample Content [Truncated]` cannot be used as an input to `--map` and `--partition-*`.
 
 To convert between different formats, a transformation with an identity function can used:
 
