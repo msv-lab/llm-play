@@ -225,7 +225,7 @@ It is equivalent to the following:
 
 The predicate will terminate with the zero exit code iff it passes the evaluation; its output cannot be exported with `--output`. Predicates can only be applied to commands with a single model/prompt/response.
 
-## Data Formats [WIP]
+## Data Formats
 
 Data can be written using the `--output` and `--update` options, or read using the `--map` and `--partition` options in the following three formats: `FS_TREE` (filesystem tree), `JSON` and `CSV`. The format is determined by the argument of the above options, which is treated as a directory path unless it ends with `.json` or `.csv`. Here is a comparison table between these formats.
 
