@@ -43,7 +43,7 @@ import mistletoe
 
 VERSION = "0.0.0"
 
-DEFAULT_MODEL = "qwen2.5-7b-instruct"
+DEFAULT_MODEL = "qwen2.5-72b-instruct"
 
 ANSWER_DIRECTIVE = "Wrap the final answer with <answer></answer>."
 
@@ -795,15 +795,15 @@ class Partition:
             prompt_file1.flush()
             prompt_file2.write(prompt2.content.encode())
             prompt_file2.flush()
-            data_file1.write(sample1.encode())
+            data_file1.write(sample1.content.encode())
             data_file1.flush()
-            data_file2.write(sample2.encode())
+            data_file2.write(sample2.content.encode())
             data_file2.flush()
             cmd = instantiate_shell_template(
                 relation,
                 prompts=[prompt1, prompt2],
                 prompt_files=[prompt_file1.name, prompt_file2.name],
-                data=[sample1, sample2],
+                data=[sample1.content, sample2.content],
                 data_files=[data_file1.name, data_file2.name],
             )
             result = subprocess.run(
