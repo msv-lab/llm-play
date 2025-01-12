@@ -105,19 +105,19 @@ Multiple prompt files can be specified as inputs, e.g. using all `*.md` files in
 
     llm-play --prompt *.md --output samples
 
-[WIP] When the argument of `--prompt` is a directory, all `*.md` files are loaded from this directory non-recursively.
+When the argument of `--prompt` is a directory, all `*.md` files are loaded from this directory non-recursively.
 
 If the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its label. When a query is supplied through stdin or as a command-line argument, the label is empty.
+
+Several outputs can be specified at the same time, e.g.
+
+    --output samples samples.json
 
 [WIP] To update an existing store, the `--update` option should be used instead of `--output`:
 
     llm-play --prompt *.md --update samples
 
 In case of collisions, i.e. samples for the same (model, temperature, prompt) tuple already exist in the store, the prompt labels with matching hashes will be updated, and the old responses are removed.
-
-[WIP] Several outputs can be specified at the same time, e.g.
-
-    --output samples samples.json --update samples.csv
 
 ## Data Transformation
 
@@ -144,11 +144,13 @@ The above function searches for text wrapped within `<answer>` and `</answer>` t
 
 Transformation is performed by either builtin functions or shell commands. The builtin function `__ID__` simply returns the entire string without modification. The builtin function `__FIRST_TAGGED_ANSWER__` returns the first occurence of a string wrapped into the tag `<answer></answer>`. The builtin function `__FIRST_MARKDOWN_CODE_BLOCK__` extract the content of the first Markdown code block.
 
-Function defined through shell commands should use the [shell template language](#shell-template-language). For example, this is to count the number of characters in each sample:
+Function defined through shell commands should use the [shell template language](#shell-template-language). For example, this is to count the number of characters in each response:
 
     --function 'wc -m < %%ESCAPED_DATA_FILE%%'
 
-A transformation of a datum fails iff the function terminates with a non-zero exit code; in this case, the datum is ignored. Thus, shell commands can also be used for data filtering. e.g. filtering out responses not containing useful information.
+A transformation of a datum fails iff the function terminates with a non-zero exit code; in this case, the datum is ignored. Thus, shell commands can also be used for data filtering. For example, this is to filter out responses longer than 50 characters:
+
+    --function '(( $(wc -m < %%ESCAPED_DATA_FILE%%) <= 50 )) && cat %%ESCAPED_DATA_FILE%%' \
 
 Answers can also be extracted by LLMs. For example, this function checks if a prevously received response is affirmative:
 
@@ -203,15 +205,15 @@ Predicates are special one-the-fly boolean response evaluators. For example, thi
 
     llm-play "Is $CITY the capital of China?" --predicate
 
-It is equivalent to the following (plus, the comparision is performed using `__TRIMMED_CASE_INSENSITIVE__)`:
+It is equivalent to extracting the answer and checking if it is equivalent to `Yes` in a case-insensitive manner, and terminating with the zero exit code iff it is so:
 
-    if [ "$(llm-play "Is $CITY the capital of China? Respond Yes or No." --answer)" = "Yes" ]; then
+    if [ "$(llm-play "Is $CITY the capital of China? Respond Yes or No." --answer | tr '[:upper:]' '[:lower:]' | xargs)" = "yes" ]; then
         exit 0
     else
         exit 1
     fi
 
-The predicate will terminate with the zero exit code iff it passes the evaluation; its output cannot be exported with `--output`. Predicates can only be applied to commands with a single model/prompt/response.
+The output of a `--predicate` cannot be exported with `--output`. Predicates can only be applied to commands with a single model/prompt/response.
 
 ## Data Formats
 

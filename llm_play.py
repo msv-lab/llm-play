@@ -442,6 +442,7 @@ class Store:
     class FSTreeWriter:
         def __init__(self, path):
             self.path = path
+            path.mkdir(exist_ok=True, parents=True)
 
         def process(self, i):
             distr_dir = self.path / i.distribution.id()
@@ -823,8 +824,8 @@ class Partition:
                 class_id = id
                 break
             if self.relation != '__ID__':
-                if self.relation in BUILTIN_RELATION:
-                    if BUILTIN_FUNCTIONS[self.relation](i.sample.content, sample.content):
+                if self.relation in BUILTIN_RELATIONS:
+                    if BUILTIN_RELATIONS[self.relation](i.sample.content, sample.content):
                         class_id = id
                         break
                 else:
@@ -984,8 +985,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="llm-play interface")
     parser.add_argument("query", nargs="?", type=str, help="Query string")
     parser.add_argument("--prompt", nargs="+", type=str, help="Prompt files")
-    parser.add_argument("--output", type=str, help="Output FS-tree/JSON/CSV")
-    parser.add_argument("--update", type=str, help="FS-tree/JSON to update")
+    parser.add_argument("--output", nargs="+", type=str, help="Output FS-tree/JSON/CSV")
     parser.add_argument("--model", nargs="+", type=str, help="List of models to query")
     parser.add_argument(
         "-t", "--temperature", type=float, help="Temperature for model generation"
@@ -1024,20 +1024,22 @@ def parse_args():
     return parser.parse_args()
 
 
-def process_prompt_files(file_list):
+def process_prompt_files(path_list):
     prompts = []
-    seen_labels = set()
 
-    for file_path in file_list:
-        base_name = os.path.basename(file_path)
-        label = os.path.splitext(base_name)[0]
-        if label in seen_labels:
-            print(f"duplicate prompt label: '{label}'", file=sys.stderr)
-            sys.exit(1)
-        seen_labels.add(label)
-        with open(file_path, "r") as file:
-            content = file.read()
-            prompts.append(Prompt.labelled(content, label))
+    def add_file(f):
+        label = f.stem
+        content = f.read_text()
+        prompts.append(Prompt.labelled(content, label))
+
+    for p in path_list:
+        path = Path(p)
+        if path.is_file():
+            add_file(path)
+        elif path.is_dir():
+            for f in path.iterdir():
+                if f.is_file() and f.suffix == ".md":
+                    add_file(f)
 
     return prompts
 
@@ -1209,7 +1211,6 @@ def command_dispatch(arguments, config):
 
         if (
             len(query.prompts) * len(query.distributions) * query.num_samples == 1
-            and not arguments.output
         ):
             if function == "__ID__":
                 stream_response_to_stdout(
@@ -1233,11 +1234,12 @@ def command_dispatch(arguments, config):
             else:
                 consumers.append(StreamItemPrinter(stream))
 
-    if arguments.output:
-        path = Path(arguments.output)
-        delete_path(path)
-        store = Store.detect(path)
-        consumers.append(store.get_writer())
+    if arguments.output != None and len(arguments.output) > 0:
+        for out in set(arguments.output):
+            path = Path(out)
+            delete_path(path)
+            store = Store.detect(path)
+            consumers.append(store.get_writer())
 
     for i in stream:
         for c in consumers:
