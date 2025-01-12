@@ -17,17 +17,6 @@ flowchart LR
     - CSV/JSON export`"]
 ```
 
-Technically, it generates, transforms, partitions, displays and stores a stream of tuples
-
-1. Model
-2. Temperature
-3. Prompt Label
-4. Prompt Hash
-5. Prompt Content
-6. Sample ID
-7. Sample Equivalence Class
-8. Sample Content
-
 ## Installation
 
 Set some of the following API keys as environment variables, depending on the services you plan to use:
@@ -199,21 +188,19 @@ Additionally, the option `-c` can be used to select a predefined relation when u
 
 A global partitioning w.r.t. the relation `__ID__` is performed on-the-fly during LLM sampling.
 
-## Predicates [WIP]
+## Predicates
 
-Predicates are special one-the-fly boolean response evaluators. For example, this command acts as a predicate over `$CITY`:
+Predicates are special on-the-fly boolean evaluators. For example, this command acts as a predicate over `$CITY`:
 
     llm-play "Is $CITY the capital of China?" --predicate
 
-It is equivalent to extracting the answer and checking if it is equivalent to `Yes` in a case-insensitive manner, and terminating with the zero exit code iff it is so:
+It first extracts the answer to this question with
 
-    if [ "$(llm-play "Is $CITY the capital of China? Respond Yes or No." --answer | tr '[:upper:]' '[:lower:]' | xargs)" = "yes" ]; then
-        exit 0
-    else
-        exit 1
-    fi
+    llm-play "Is $CITY the capital of China? Respond Yes or No." --answer
 
-The output of a `--predicate` cannot be exported with `--output`. Predicates can only be applied to commands with a single model/prompt/response.
+If the answer is equivalent to `Yes` w.r.t. `__TRIMMED_CASE_INSENSITIVE__`, then it exits with the zero status code. If the answer is equivalent to `No`, it exits with the code `1`. If the answer is neither `Yes` or `No`, it exits with the code `2`.
+
+The output of a command with `--predicate` cannot be exported with `--output`. Predicates can only be applied to commands with a single model/prompt/response.
 
 ## Data Formats
 

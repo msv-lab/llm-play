@@ -997,9 +997,9 @@ def parse_args():
     parser.add_argument(
         "--function", type=str, help="Builtin function or shell command"
     )
-    parser.add_argument(
-        "--extension", type=str, help="File extension for transformed data"
-    )
+    # parser.add_argument(
+    #     "--extension", type=str, help="File extension for transformed data"
+    # )
     parser.add_argument("--answer", action="store_true", help="Extract answer")
     parser.add_argument("--code", action="store_true", help="Extract code")
     parser.add_argument(
@@ -1016,7 +1016,7 @@ def parse_args():
         action="store_true",
         help="Evaluate truthfulness of the predicate",
     )
-    parser.add_argument("--debug", action="store_true", help="Print logs on stderr")
+    # parser.add_argument("--debug", action="store_true", help="Print logs on stderr")
     parser.add_argument("--version", action="store_true", help="Print version")
     parser.add_argument(
         "-c", "--configure", action="store_true", help="Set default options"
@@ -1175,8 +1175,13 @@ def command_dispatch(arguments, config):
             print("--function is mutually exclusive with --code/--answer", file=sys.stderr)
             exit(1)
 
-        if arguments.code and arguments.answer:
-            print("--code  is mutually exclusive with --answer", file=sys.stderr)
+        convenience_functions = [
+            bool(arguments.code),
+            bool(arguments.answer),
+            bool(arguments.predicate)
+        ]
+        if sum(convenience_functions) > 1:
+            print("--code, --answer and --predicate are mutually exclusive", file=sys.stderr)
             exit(1)
 
         function = '__ID__'
@@ -1190,6 +1195,13 @@ def command_dispatch(arguments, config):
 
         if arguments.code:
             function = '__FIRST_MARKDOWN_CODE_BLOCK__'
+
+        if arguments.predicate:
+            function = '__FIRST_TAGGED_ANSWER__'
+            new_prompts = []
+            pred_prompt = prompts[0].content + " " + PREDICATE_DIRECTIVE + " " + ANSWER_DIRECTIVE
+            new_prompts.append(Prompt.labelled(pred_prompt, prompts[0].label))
+            prompts = new_prompts
 
         if arguments.function:
             function = arguments.function
@@ -1209,9 +1221,21 @@ def command_dispatch(arguments, config):
             prompts=prompts,
         )
 
+        if (arguments.predicate and
+            len(query.prompts) * len(query.distributions) * query.num_samples > 1):
+            print("--predicate can only be used with a single model/prompt/response", file=sys.stderr)
+            exit(1)
+
         if (
             len(query.prompts) * len(query.distributions) * query.num_samples == 1
         ):
+            if arguments.predicate:
+                i = next(Map(LLMSampleStream(query, config), function))
+                if BUILTIN_RELATIONS["__TRIMMED_CASE_INSENSITIVE__"](i.sample.content, "Yes"):
+                    exit(0)
+                if BUILTIN_RELATIONS["__TRIMMED_CASE_INSENSITIVE__"](i.sample.content, "No"):
+                    exit(1)
+                exit(2)
             if function == "__ID__":
                 stream_response_to_stdout(
                     prompts[0].content,
