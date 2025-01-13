@@ -88,7 +88,7 @@ To save full results, the output store needs to be specified with the option `--
             ...
             └── 9_9.md
 
-In this tree, `question1_4ae91f5bd6090fb6.md` contains the prompt; `0_0.md`, ..., `9_9.md` are the samples. In `5_3.md`, `5` is the sample identifier, and `3` is the identifier of its equivalence class.
+In this tree, `question1_4ae91f5bd6090fb6.md` contains the prompt; `0_0.md`, ..., `9_9.md` are the samples. In `5_3.md`, `5` is the sample identifier, and `3` is the identifier of its equivalence class. The sample file extension can be specified using the `--extension` options, e.g. `--extension py`.
 
 The data can also be stored in CSV and JSON formats. Please see [Data Formats](#data-formats) for details.
 
@@ -113,19 +113,6 @@ Data transformation can be used, for example, to extract relevant information fr
              --output extracted
 
 The above function searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
-
-By default, the extracted data is saved into "txt" files. The file extension can be specified using the `--extension` options, e.g. `--extension py` resulting in:
-
-    extracted
-    └── qwen2.5-7b-instruct_1.0
-        ├── _4ae91f5bd6090fb6.md
-        └── _4ae91f5bd6090fb6
-            ├── 0_0.py
-            ├── 1_1.py
-            ...
-            └── 9_9.py
-
-### Functions
 
 Transformation is performed by either builtin functions or shell commands. The builtin function `__ID__` simply returns the entire string without modification. The builtin function `__FIRST_TAGGED_ANSWER__` returns the first occurence of a string wrapped into the tag `<answer></answer>`. The builtin function `__FIRST_MARKDOWN_CODE_BLOCK__` extract the content of the first Markdown code block.
 
