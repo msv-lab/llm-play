@@ -23,7 +23,7 @@ Installed the tool from PyPI:
 
     pip install llm-play
 
-Configure API providers and models interactively (with options editable in ~/.llm_play.yaml):
+Configure API providers and models interactively (with options editable in `~/.llm_play.yaml`):
 
     llm-play --add-provider
     llm-play --add-model
@@ -36,19 +36,15 @@ An LLM can be queried via an argument, a specified prompt file, or stdin:
     llm-play --prompt prompt.md
     llm-play < prompt.md
 
-The argument and the file options are mutually-exclusive. They both take precedence over stdin.
-
 In all these cases, the response is printed on stdout, and can be redirected to a file:
 
     llm-play "What is the capital of China?" > output.md
 
-For convenience, default settings such as the model and its temperature can be configured interactively with `-c/--configure`. These settings are saved in `~/.llm_play.yaml`:
+Default settings such as the model and its temperature can be configured interactively with `-c/--configure`. These settings are saved in `~/.llm_play.yaml`:
 
     llm-play -c
 
-Command-line options take precedence over the default settings.
-
-`--version` prints the version; `--help` print the help message.
+Command-line options take precedence over the default settings. `--version` prints the version; `--help` print the help message.
 
 ## Batch Processing
 
@@ -66,14 +62,11 @@ In batch mode, a short summary of responses will be printed on stdout:
     qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │    0 │     0 │ "It ...
     qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │    1 │     1 │ "It ...
     qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │    2 │     2 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │    3 │     3 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │    4 │     4 │ "It ...
-    qwen2.5-72b-instruct │   0.5 │ question1 │ 4ae91f5... │    5 │     5 │ "It ...
     ...
 
-In this table, `question1` is the prompt label, `4ae91f5bd6090fb6` is its SHAKE128 length=8 hash. Prompts with repeating hashes are skipped.  The `Class` column displays the IDs of equivalence classes of responses. Please see [Partitioning](#partitioning) for details.
+In this table, `question1` is the prompt label, `4ae91f5bd6090fb6` is its SHAKE128 length=8 hash. Prompts with repeating hashes are skipped. The `Class` column displays the IDs of equivalence classes of responses (see [Partitioning](#partitioning)).
 
-To save full results, the output store needs to be specified with the option `--output`. For example, adding `--output samples` will save the results in the following filesystem tree:
+To store results, the output needs to be specified with `--output`. For example, `--output samples` will save the results in the following filesystem tree:
 
     samples
     ├── qwen2.5-7b-instruct_0.5
@@ -91,17 +84,15 @@ To save full results, the output store needs to be specified with the option `--
 
 In this tree, `question1_4ae91f5bd6090fb6.md` contains the prompt; `0_0.md`, ..., `9_9.md` are the samples. In `5_3.md`, `5` is the sample identifier, and `3` is the identifier of its equivalence class. The sample file extension can be specified using the `--extension` options, e.g. `--extension py`.
 
-The data can also be stored in CSV and JSON formats. Please see [Data Formats](#data-formats) for details.
+The data can also be stored in CSV and JSON formats (see [Data Formats](#data-formats)).
 
 Multiple prompt files can be specified as inputs, e.g. using all `*.md` files in the current directory:
 
     llm-play --prompt *.md --output samples
 
-When the argument of `--prompt` is a directory, all `*.md` files are loaded from this directory non-recursively.
+When the argument of `--prompt` is a directory, all `*.md` files are loaded from this directory non-recursively. If the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its label. When a query is supplied through stdin or as a command-line argument, the label is empty.
 
-If the query originates from a file, the prompt will adopt the file's name (excluding the extension) as its label. When a query is supplied through stdin or as a command-line argument, the label is empty.
-
-Several outputs can be specified at the same time, e.g.
+Multiple outputs can be specified at the same time, e.g.
 
     --output samples samples.json
 
@@ -113,7 +104,7 @@ Data transformation can be used, for example, to extract relevant information fr
              --function __FIRST_TAGGED_ANSWER__ \
              --output extracted
 
-The above function searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
+The above function searches for text wrapped with `<answer>` and `</answer>` and prints only the content inside the tags.
 
 Transformation is performed by either builtin functions or shell commands. The builtin function `__ID__` simply returns the entire string without modification. The builtin function `__FIRST_TAGGED_ANSWER__` returns the first occurence of a string wrapped into the tag `<answer></answer>`. The builtin function `__FIRST_MARKDOWN_CODE_BLOCK__` extract the content of the first Markdown code block.
 
@@ -229,6 +220,8 @@ The `ESCAPED_` variants are provided for the following variables:
 - `%%DATA_FILE%%` - a path to a temporary file containing the data.
 - `%%PROMPT_FILE%%` - a path to a temporary file containing the prompt.
 - `%%PROMPT_LABEL%%` - the prompt label.
+- [WIP] `%%UNIQUE_ID%%` - a unique ID associated with the datum.
+- [WIP] `%%TEMP_DIR%%` - a temporary directory that is removed after the shell command terminates.
 
 For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%RAW_DATA1%%` and `%%PROMPT_LABEL2%%`.
 
