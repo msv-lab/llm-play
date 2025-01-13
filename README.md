@@ -47,6 +47,8 @@ For convenience, default settings such as the model and its temperature can be c
 
 Command-line options take precedence over the default settings.
 
+`--version` prints the version; `--help` print the help message.
+
 ## Batch Processing
 
 When the number of models or prompts or responses exceeds one, the tool operates in batch mode. For example, to sample 10 responses from two models (`qwen2.5-7b-instruct` and `qwen2.5-coder-7b-instruct`) with a temperature of 0.5, use the command:
@@ -102,12 +104,6 @@ Several outputs can be specified at the same time, e.g.
 
     --output samples samples.json
 
-[WIP] To update an existing store, the `--update` option should be used instead of `--output`:
-
-    llm-play --prompt *.md --update samples
-
-In case of collisions, i.e. samples for the same (model, temperature, prompt) tuple already exist in the store, the prompt labels with matching hashes will be updated, and the old responses are removed.
-
 ## Data Transformation
 
 Data transformation can be used, for example, to extract relevant information from the generated samples or from data extracted in earlier stages. This is to extract text within the tag `<answer> ... </answer>` from all samples in `samples`, and save the results into the directory `extracted`:
@@ -118,7 +114,7 @@ Data transformation can be used, for example, to extract relevant information fr
 
 The above function searches for text wrapped within `<answer>` and `</answer>` tags and prints only the content inside the tags.
 
-[WIP] By default, the extracted data is saved into "txt" files. The file extension can be specified using the `--extension` options, e.g. `--extension py` resulting in:
+By default, the extracted data is saved into "txt" files. The file extension can be specified using the `--extension` options, e.g. `--extension py` resulting in:
 
     extracted
     └── qwen2.5-7b-instruct_1.0
@@ -211,7 +207,7 @@ Data can be written using the `--output` and `--update` options, or read using t
 | Intended use | Manual inspection | Storage and sharing | Data analysis |
 | Store prompts? | Yes | Yes | Truncated |
 | Store responses? | Yes | Yes | Truncated |
-| [WIP] Store metadata? | No | Yes | No |
+| Store metadata? | File extension | File extension | No |
 
 `FS_TREE` enables running commands for a subset of data, e.g.
 
@@ -248,10 +244,19 @@ The `ESCAPED_` variants are provided for the following variables:
 
 For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%RAW_DATA1%%` and `%%PROMPT_LABEL2%%`.
 
-## Other Options
+## Planned Improvements
+
+[WIP] To update an existing store, use the option `--update` instead of `--output`:
+
+    llm-play --prompt *.md --update samples
+
+In case of collisions, i.e. when samples for the same (model, temperature, prompt) tuple already exist in the store, the prompt labels with matching hashes will be updated, and the old responses will be removed.
+
+[WIP] To continue an interrupted experiment, use `--continue` instead of `--output` or `--update`.
+
+    llm-play --prompt *.md --continue samples
+
+It will skip all tasks for which there is already an output file in the store.
 
 [WIP] The option `--debug` prints detailed logs on stderr.
 
-The option `--version` prints the version and exits.
-
-The option `--help` prints help message and exits.

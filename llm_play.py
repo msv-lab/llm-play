@@ -16,7 +16,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from dataclasses import dataclass
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Any
 from enum import Enum, auto
 
 import shlex
@@ -231,6 +231,7 @@ class StreamItem:
     distribution: Distribution
     prompt: Prompt
     sample: Sample
+    metadata: Dict[str, Any]
 
 
 class StoreType(Enum):
@@ -292,7 +293,7 @@ class Store:
     path: Path
 
     @staticmethod
-    def detect(path):
+    def from_path(path):
         if path.suffix == '.json':
             return Store(type=StoreType.JSON, path=path)
         if path.suffix == '.csv':
@@ -325,7 +326,10 @@ class Store:
                 sample = {
                     "id": row['Sample ID'],
                     "class_id": row['Sample Equivalence Class'],
-                    "content": row['Sample Content']
+                    "content": row['Sample Content'],
+                    "metadata": {
+                        "extension": ".md"
+                    }
                 }
                 data[distr_id][row['Prompt Hash']].append(sample)
         # Convert the defaultdict to a normal dict
@@ -361,7 +365,10 @@ class Store:
                         yield {
                             "id": int(sample_id_str),
                             "class_id": int(class_id_str),
-                            "content": f.read_text()
+                            "content": f.read_text(),
+                            "metadata": {
+                                "extension": f.suffix
+                            }
                         }
 
         def load_prompts_and_samples(distr_dir_data):
@@ -431,34 +438,41 @@ class Store:
                     }
                 }
 
-    def get_writer(self):
+    def get_writer(self, extension):
         if self.type == StoreType.FS_TREE:
-            return self.FSTreeWriter(self.path)
+            return self.FSTreeWriter(self.path, extension)
         if self.type == StoreType.JSON:
-            return self.JSONWriter(self.path)
+            return self.JSONWriter(self.path, extension)
         if self.type == StoreType.CSV:
-            return self.CSVWriter(self.path)
+            return self.CSVWriter(self.path, extension)
 
     class FSTreeWriter:
-        def __init__(self, path):
+        def __init__(self, path, extension):
+            self.extension = extension
             self.path = path
             path.mkdir(exist_ok=True, parents=True)
 
         def process(self, i):
             distr_dir = self.path / i.distribution.id()
             distr_dir.mkdir(exist_ok=True, parents=True)
+            extension = (
+                self.extension
+                if self.extension
+                else i.metadata["extension"]
+            )
             prompt_file = distr_dir / f"{i.prompt.label}_{i.prompt.hash}.md"
             if not prompt_file.exists():
                 prompt_file.write_text(i.prompt.content)
             responses_dir = distr_dir / f"{i.prompt.label}_{i.prompt.hash}"
             responses_dir.mkdir(exist_ok=True)
-            (responses_dir / f"{i.sample.id}_{i.sample.class_id}.md").write_text(i.sample.content)
+            (responses_dir / f"{i.sample.id}_{i.sample.class_id}{extension}").write_text(i.sample.content)
 
         def flush(self):
             pass
 
     class JSONWriter:
-        def __init__(self, path):
+        def __init__(self, path, extension):
+            self.extension = extension
             self.path = path
             self.result = {
                 "prompts": [],
@@ -476,10 +490,18 @@ class Store:
                 self.added_prompts.add(i.prompt.hash)
             dist_id = i.distribution.id()
             prompt_hash = i.prompt.hash
+            extension = (
+                self.extension
+                if self.extension
+                else i.metadata["extension"]
+            )
             self.result["data"][dist_id][prompt_hash].append({
                 "id": i.sample.id,
                 "class_id": i.sample.class_id,
-                "content": i.sample.content
+                "content": i.sample.content,
+                "metadata": {
+                    "extension": extension
+                }
             })
 
         def flush(self):
@@ -492,6 +514,12 @@ class Store:
                 json.dump(self.result, f, indent=4)
 
     class CSVWriter:
+        def __init__(self, path, extension):
+            self.extension = extension
+            self.path = path
+            self.rows = []
+            self.truncated = False
+
         def get_headers(self):
             return (
                 "Model",
@@ -502,11 +530,6 @@ class Store:
                 "Sample Equivalence Class",
                 "Sample Content" if not self.truncated else "Sample Content [Truncated]"
             )
-
-        def __init__(self, path):
-            self.path = path
-            self.rows = []
-            self.truncated = False
 
         def _truncate(self, input_string):
             lines = input_string.splitlines()
@@ -624,6 +647,9 @@ class LLMSampleStream:
             distribution=d,
             prompt=p,
             sample=s,
+            metadata={
+                "extension": ".md"
+            }
         )
 
     def next_batch(self):
@@ -672,8 +698,11 @@ class JSONDataStream:
                     p = Prompt(**next(p for p in json_data["prompts"] if p["hash"] == prompt_hash))
                     if len(p.label) > max_prompt_label_len:
                         max_prompt_label_len = len(p.label)
-                    s = Sample(**sample)
-                    self.cache.append((d, p, s))
+                    s = Sample(id = sample["id"],
+                               class_id = sample["class_id"],
+                               content = sample["content"])
+                    m = sample["metadata"]
+                    self.cache.append((d, p, s, m))
         self.size = len(self.cache)
         self._table_format = stream_item_table_format(max_model_name_len, max_prompt_label_len)
 
@@ -685,7 +714,7 @@ class JSONDataStream:
             raise StopIteration
         self.current_item_index += 1
         self._next_batch = False
-        d, p, s = self.cache.popleft()
+        d, p, s, m= self.cache.popleft()
         if (len(self.cache) > 0 and
             (self.cache[0][0] != d or self.cache[0][1] != p)):
             self._next_batch = True
@@ -693,6 +722,7 @@ class JSONDataStream:
             distribution=d,
             prompt=p,
             sample=s,
+            metadata=m
         )
 
     def next_batch(self):
@@ -753,7 +783,8 @@ class Map:
                 prompt=i.prompt,
                 sample=Sample(id=i.sample.id,
                               class_id=i.sample.class_id,
-                              content=result.value)
+                              content=result.value),
+                metadata=i.metadata
             )
 
     def next_batch(self):
@@ -839,7 +870,8 @@ class Partition:
             prompt=i.prompt,
             sample=Sample(id=i.sample.id,
                           class_id=class_id,
-                          content=i.sample.content)
+                          content=i.sample.content),
+            metadata=i.metadata
         )
 
     def next_batch(self):
@@ -997,9 +1029,9 @@ def parse_args():
     parser.add_argument(
         "--function", type=str, help="Builtin function or shell command"
     )
-    # parser.add_argument(
-    #     "--extension", type=str, help="File extension for transformed data"
-    # )
+    parser.add_argument(
+        "--extension", type=str, help="File extension for transformed data"
+    )
     parser.add_argument("--answer", action="store_true", help="Extract answer")
     parser.add_argument("--code", action="store_true", help="Extract code")
     parser.add_argument(
@@ -1098,10 +1130,14 @@ def canonical_float_format(number):
         return str(number)
 
 
-def print_with_newline_if_tty(content):
-    print(content, end="")
-    if os.isatty(sys.stdout.fileno()) and not content.endswith("\n"):
-        print()
+class SimplePrinter:
+    def process(self, i):
+        print(i.sample.content, end="")
+        if os.isatty(sys.stdout.fileno()) and not i.sample.content.endswith("\n"):
+            print()
+
+    def flush(self):
+        pass
 
 
 def delete_path(path: Path):
@@ -1136,8 +1172,14 @@ def command_dispatch(arguments, config):
         )
         exit(1)
 
+    extension = (
+        f".{arguments.extension}"
+        if arguments.extension
+        else None
+    )
+
     if arguments.map:
-        store = Store.detect(Path(arguments.map))
+        store = Store.from_path(Path(arguments.map))
         stream = JSONDataStream(store.load())
         function = (
             arguments.function
@@ -1148,10 +1190,10 @@ def command_dispatch(arguments, config):
         consumers.append(StreamItemPrinter(stream))
     elif arguments.partition_globally or arguments.partition_locally:
         if arguments.partition_globally:
-            store = Store.detect(Path(arguments.partition_globally))
+            store = Store.from_path(Path(arguments.partition_globally))
             mode = PartitioningMode.GLOBAL
         else:
-            store = Store.detect(Path(arguments.partition_locally))
+            store = Store.from_path(Path(arguments.partition_locally))
             mode = PartitioningMode.LOCAL
         stream = JSONDataStream(store.load())
         relation = (
@@ -1244,26 +1286,21 @@ def command_dispatch(arguments, config):
                     config
                 )
             else:
-                i = next(Map(LLMSampleStream(query, config), function))
-                print_with_newline_if_tty(i.sample.content)
+                stream = Map(LLMSampleStream(query, config), function)
+                consumers.append(SimplePrinter())
         else:
             stream = LLMSampleStream(query, config)
             if function != '__ID__':
                  stream = Map(stream, function)
             stream = Partition(stream, '__ID__', PartitioningMode.GLOBAL)
-            if (
-                len(query.prompts) * len(query.distributions) * query.num_samples == 1
-            ):
-                consumers.append(lambda i: print_with_newline_if_tty(i.sample.content))
-            else:
-                consumers.append(StreamItemPrinter(stream))
+            consumers.append(StreamItemPrinter(stream))
 
     if arguments.output != None and len(arguments.output) > 0:
         for out in set(arguments.output):
             path = Path(out)
             delete_path(path)
-            store = Store.detect(path)
-            consumers.append(store.get_writer())
+            store = Store.from_path(path)
+            consumers.append(store.get_writer(extension))
 
     for i in stream:
         for c in consumers:
@@ -1271,6 +1308,7 @@ def command_dispatch(arguments, config):
 
     for c in consumers:
         c.flush()
+
 
 def main():
     arguments = parse_args()
@@ -1290,6 +1328,7 @@ def main():
         exit(0)
 
     command_dispatch(arguments, config)
+
 
 if __name__ == "__main__":
     main()
