@@ -17,15 +17,16 @@ flowchart LR
     - CSV/JSON export`"]
 ```
 
-## Installation
+## [WIP] Installation & Setup
 
-Set some of the following API keys as environment variables, depending on the services you plan to use:
+Installed the tool from PyPI:
 
-- `DASHSCOPE_API_KEY`
-- `DEEPSEEK_API_KEY`
-- `CLOSEAI_API_KEY`
+    pip install llm-play
 
-Install the tool by running the command `python -m pip install .`
+Configure API providers and models interactively (with options editable in ~/.llm_play.yaml):
+
+    llm-play --add-provider
+    llm-play --add-model
 
 ## Basic Usage
 

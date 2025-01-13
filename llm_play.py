@@ -16,7 +16,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from dataclasses import dataclass
-from typing import Dict, Tuple, List, Any
+from typing import Dict, Tuple, List, Any, Union
 from enum import Enum, auto
 
 import shlex
@@ -41,7 +41,7 @@ from wcwidth import wcwidth, wcswidth
 import mistletoe
 
 
-VERSION = "0.0.0"
+VERSION = "0.1.0"
 
 DEFAULT_MODEL = "qwen2.5-72b-instruct"
 
@@ -148,7 +148,7 @@ FUNCTION_FAILURE = _FunctionFailure()
 class FunctionSuccess:
     value: str
 
-FunctionResult = _FunctionFailure | FunctionSuccess
+FunctionResult = Union[_FunctionFailure, FunctionSuccess]
 
 
 def extract_first_markdown_code_block(content):
