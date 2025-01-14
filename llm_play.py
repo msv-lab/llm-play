@@ -142,11 +142,14 @@ CONDENSED_SHELL_DATA_LENGTH = 100
 class _FunctionFailure:
     pass
 
+
 FUNCTION_FAILURE = _FunctionFailure()
+
 
 @dataclass
 class FunctionSuccess:
     value: str
+
 
 FunctionResult = Union[_FunctionFailure, FunctionSuccess]
 
@@ -162,22 +165,22 @@ def extract_first_markdown_code_block(content):
 BUILTIN_FUNCTIONS = {
     "__ID__": (lambda x: FunctionSuccess(x)),
     "__FIRST_TAGGED_ANSWER__": (
-        lambda s: (FunctionSuccess(s.split("<answer>", 1)[1].split("</answer>", 1)[0])
-                   if "<answer>" in s and "</answer>" in s and s.index("<answer>") < s.index("</answer>")
-                   else FUNCTION_FAILURE)
+        lambda s: (
+            FunctionSuccess(s.split("<answer>", 1)[1].split("</answer>", 1)[0])
+            if "<answer>" in s
+            and "</answer>" in s
+            and s.index("<answer>") < s.index("</answer>")
+            else FUNCTION_FAILURE
+        )
     ),
-    "__FIRST_MARKDOWN_CODE_BLOCK__": (
-        lambda s: extract_first_markdown_code_block(s)
-    )
+    "__FIRST_MARKDOWN_CODE_BLOCK__": (lambda s: extract_first_markdown_code_block(s)),
 }
 
 BUILTIN_RELATIONS = {
-    "__ID__": (
-        lambda x, y: x == y
-    ),
+    "__ID__": (lambda x, y: x == y),
     "__TRIMMED_CASE_INSENSITIVE__": (
         lambda x, y: x.strip().lower() == y.strip().lower()
-    )
+    ),
 }
 
 
@@ -189,7 +192,7 @@ class Prompt:
 
     @staticmethod
     def unlabelled(content):
-        return Prompt.labelled(content, '')
+        return Prompt.labelled(content, "")
 
     @staticmethod
     def labelled(content, label):
@@ -294,9 +297,9 @@ class Store:
 
     @staticmethod
     def from_path(path):
-        if path.suffix == '.json':
+        if path.suffix == ".json":
             return Store(type=StoreType.JSON, path=path)
-        if path.suffix == '.csv':
+        if path.suffix == ".csv":
             return Store(type=StoreType.CSV, path=path)
         return Store(type=StoreType.FS_TREE, path=path)
 
@@ -312,35 +315,31 @@ class Store:
     def _load_csv(self):
         prompts = []
         data = defaultdict(lambda: defaultdict(list))
-        with open(self.path, mode='r') as csvfile:
+        with open(self.path, mode="r") as csvfile:
             csv_reader = csv.DictReader(csvfile)
             for row in csv_reader:
                 prompt = {
-                    "hash": row['Prompt Hash'],
-                    "label": row['Prompt Label'],
-                    "content": ""
+                    "hash": row["Prompt Hash"],
+                    "label": row["Prompt Label"],
+                    "content": "",
                 }
                 if prompt not in prompts:
                     prompts.append(prompt)
                 distr_id = f"{row['Model']}_{row['Temperature']}"
                 sample = {
-                    "id": row['Sample ID'],
-                    "class_id": row['Sample Equivalence Class'],
-                    "content": row['Sample Content'],
-                    "metadata": {
-                        "extension": ".md"
-                    }
+                    "id": row["Sample ID"],
+                    "class_id": row["Sample Equivalence Class"],
+                    "content": row["Sample Content"],
+                    "metadata": {"extension": ".md"},
                 }
-                data[distr_id][row['Prompt Hash']].append(sample)
+                data[distr_id][row["Prompt Hash"]].append(sample)
         # Convert the defaultdict to a normal dict
         data = {key: dict(value) for key, value in data.items()}
-        return {
-            "prompts": prompts,
-            "data": data
-        }
+        return {"prompts": prompts, "data": data}
 
     def _load_fs_tree(self):
         path_query = self.path
+
         def parse_distr_dir(distr_dir):
             """
             all entries such that the name of an md file contains _, and there is a corresponding dir
@@ -349,7 +348,9 @@ class Store:
                 if prompt_file.is_file() and prompt_file.suffix == ".md":
                     sample_dir_name = prompt_file.stem
                     if "_" in sample_dir_name:
-                        prompt_label, prompt_hash = tuple(sample_dir_name.rsplit("_", 1))
+                        prompt_label, prompt_hash = tuple(
+                            sample_dir_name.rsplit("_", 1)
+                        )
                         sample_dir = distr_dir / sample_dir_name
                         if sample_dir.exists() and sample_dir.is_dir():
                             yield (prompt_label, prompt_hash, prompt_file, sample_dir)
@@ -360,15 +361,13 @@ class Store:
             """
             for f in sample_dir.iterdir():
                 if f.is_file():
-                    if f.stem.count('_') == 1:
+                    if f.stem.count("_") == 1:
                         sample_id_str, class_id_str = tuple(f.stem.split("_"))
                         yield {
                             "id": int(sample_id_str),
                             "class_id": int(class_id_str),
                             "content": f.read_text(),
-                            "metadata": {
-                                "extension": f.suffix
-                            }
+                            "metadata": {"extension": f.suffix},
                         }
 
         def load_prompts_and_samples(distr_dir_data):
@@ -381,12 +380,14 @@ class Store:
             """
             prompts = []
             samples = dict()
-            for (prompt_label, prompt_hash, prompt_file, sample_dir) in distr_dir_data:
-                prompts.append({
-                    "hash": prompt_hash,
-                    "label": prompt_label,
-                    "content": prompt_file.read_text()
-                })
+            for prompt_label, prompt_hash, prompt_file, sample_dir in distr_dir_data:
+                prompts.append(
+                    {
+                        "hash": prompt_hash,
+                        "label": prompt_label,
+                        "content": prompt_file.read_text(),
+                    }
+                )
                 samples[prompt_hash] = list(collect_samples(sample_dir))
             return (prompts, samples)
 
@@ -398,15 +399,10 @@ class Store:
                 return subdirs[0]
 
         distr_dir_data = list(parse_distr_dir(path_query))
-        if len(distr_dir_data) > 0: # path_query is a distr dir
+        if len(distr_dir_data) > 0:  # path_query is a distr dir
             prompts, samples = load_prompts_and_samples(distr_dir_data)
-            return {
-                "prompts": prompts,
-                "data": {
-                    path_query.name: samples
-                }
-            }
-        else: # path_query is either the root directory, or a sample directory
+            return {"prompts": prompts, "data": {path_query.name: samples}}
+        else:  # path_query is either the root directory, or a sample directory
             subdirs = [d for d in path_query.iterdir() if d.is_dir()]
             if len(subdirs) > 0:
                 # assume there are not subdirs in a sample dir, so path_query is the root directory
@@ -418,12 +414,11 @@ class Store:
                         prompts, samples = load_prompts_and_samples(distr_dir_data)
                         all_samples[distr_dir.name] = samples
                         for prompt in prompts:
-                            if not any(p["hash"] == prompt["hash"] for p in all_prompts):
+                            if not any(
+                                p["hash"] == prompt["hash"] for p in all_prompts
+                            ):
                                 all_prompts.append(prompt)
-                return {
-                    "prompts": all_prompts,
-                    "data": all_samples
-                }
+                return {"prompts": all_prompts, "data": all_samples}
             else:
                 # this is a sample directory
                 prompt_label, prompt_hash = tuple(path_query.name.rsplit("_", 1))
@@ -431,12 +426,7 @@ class Store:
                 distr_dir_data = [(prompt_label, prompt_hash, prompt_file, path_query)]
 
                 prompts, samples = load_prompts_and_samples(distr_dir_data)
-                return {
-                    "prompts": prompts,
-                    "data": {
-                        path_query.parent.name: samples
-                    }
-                }
+                return {"prompts": prompts, "data": {path_query.parent.name: samples}}
 
     def get_writer(self, extension):
         if self.type == StoreType.FS_TREE:
@@ -455,17 +445,15 @@ class Store:
         def process(self, i):
             distr_dir = self.path / i.distribution.id()
             distr_dir.mkdir(exist_ok=True, parents=True)
-            extension = (
-                self.extension
-                if self.extension
-                else i.metadata["extension"]
-            )
+            extension = self.extension if self.extension else i.metadata["extension"]
             prompt_file = distr_dir / f"{i.prompt.label}_{i.prompt.hash}.md"
             if not prompt_file.exists():
                 prompt_file.write_text(i.prompt.content)
             responses_dir = distr_dir / f"{i.prompt.label}_{i.prompt.hash}"
             responses_dir.mkdir(exist_ok=True)
-            (responses_dir / f"{i.sample.id}_{i.sample.class_id}{extension}").write_text(i.sample.content)
+            (
+                responses_dir / f"{i.sample.id}_{i.sample.class_id}{extension}"
+            ).write_text(i.sample.content)
 
         def flush(self):
             pass
@@ -476,33 +464,31 @@ class Store:
             self.path = path
             self.result = {
                 "prompts": [],
-                "data": defaultdict(lambda: defaultdict(list))
+                "data": defaultdict(lambda: defaultdict(list)),
             }
             self.added_prompts = set()
 
         def process(self, i):
             if i.prompt.hash not in self.added_prompts:
-                self.result["prompts"].append({
-                    "hash": i.prompt.hash,
-                    "label": i.prompt.label,
-                    "content": i.prompt.content
-                })
+                self.result["prompts"].append(
+                    {
+                        "hash": i.prompt.hash,
+                        "label": i.prompt.label,
+                        "content": i.prompt.content,
+                    }
+                )
                 self.added_prompts.add(i.prompt.hash)
             dist_id = i.distribution.id()
             prompt_hash = i.prompt.hash
-            extension = (
-                self.extension
-                if self.extension
-                else i.metadata["extension"]
-            )
-            self.result["data"][dist_id][prompt_hash].append({
-                "id": i.sample.id,
-                "class_id": i.sample.class_id,
-                "content": i.sample.content,
-                "metadata": {
-                    "extension": extension
+            extension = self.extension if self.extension else i.metadata["extension"]
+            self.result["data"][dist_id][prompt_hash].append(
+                {
+                    "id": i.sample.id,
+                    "class_id": i.sample.class_id,
+                    "content": i.sample.content,
+                    "metadata": {"extension": extension},
                 }
-            })
+            )
 
         def flush(self):
             # convert defaultdict to dict:
@@ -528,7 +514,11 @@ class Store:
                 "Prompt Hash",
                 "Sample ID",
                 "Sample Equivalence Class",
-                "Sample Content" if not self.truncated else "Sample Content [Truncated]"
+                (
+                    "Sample Content"
+                    if not self.truncated
+                    else "Sample Content [Truncated]"
+                ),
             )
 
         def _truncate(self, input_string):
@@ -537,27 +527,29 @@ class Store:
             joined_string = " ".join(non_empty_lines)
             processed_string = joined_string.strip()
             truncated_string = processed_string[:TRUNCATED_CSV_DATA_LENGTH]
-            is_modified = (truncated_string != input_string)
+            is_modified = truncated_string != input_string
             return truncated_string, is_modified
 
         def process(self, i):
             content, truncated = self._truncate(i.sample.content)
             self.truncated = self.truncated or truncated
-            self.rows.append((
-                i.distribution.model,
-                i.distribution.temperature,
-                i.prompt.label,
-                i.prompt.hash,
-                i.sample.id,
-                i.sample.class_id,
-                content
-            ))
+            self.rows.append(
+                (
+                    i.distribution.model,
+                    i.distribution.temperature,
+                    i.prompt.label,
+                    i.prompt.hash,
+                    i.sample.id,
+                    i.sample.class_id,
+                    content,
+                )
+            )
 
         def flush(self):
             self.path.parent.mkdir(parents=True, exist_ok=True)
             if not self.path.exists():
                 self.path.touch()
-            with self.path.open('w') as csvfile:
+            with self.path.open("w") as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(self.get_headers())
                 for row in self.rows:
@@ -602,7 +594,9 @@ class LLMSampleStream:
 
         max_model_name_len = max(len(d.model) for d in query.distributions)
         max_prompt_label_len = max(len(p.label) for p in query.prompts)
-        self._table_format = stream_item_table_format(max_model_name_len, max_prompt_label_len)
+        self._table_format = stream_item_table_format(
+            max_model_name_len, max_prompt_label_len
+        )
 
     def __iter__(self):
         return self
@@ -621,7 +615,7 @@ class LLMSampleStream:
             model=distribution.model,
             temperature=float(distribution.temperature),
             messages=[{"role": "user", "content": prompt.content}],
-            n=num_responses
+            n=num_responses,
         )
         return [c.message.content for c in completion.choices]
 
@@ -633,9 +627,11 @@ class LLMSampleStream:
             d, p, n = self.execution_plan.pop()
             samples = self._sample(d, p, n)
             for content in samples:
-                s = Sample(id=self.current_sample_index,
-                           class_id=self.current_sample_index,
-                           content = content)
+                s = Sample(
+                    id=self.current_sample_index,
+                    class_id=self.current_sample_index,
+                    content=content,
+                )
                 self.cache.append((d, p, s))
                 self.current_sample_index += 1
             if n > len(samples):
@@ -644,12 +640,7 @@ class LLMSampleStream:
                 self.current_sample_index = 0
         d, p, s = self.cache.popleft()
         return StreamItem(
-            distribution=d,
-            prompt=p,
-            sample=s,
-            metadata={
-                "extension": ".md"
-            }
+            distribution=d, prompt=p, sample=s, metadata={"extension": ".md"}
         )
 
     def next_batch(self):
@@ -695,16 +686,24 @@ class JSONDataStream:
                     d = Distribution.from_id(distr_id)
                     if len(d.model) > max_model_name_len:
                         max_model_name_len = len(d.model)
-                    p = Prompt(**next(p for p in json_data["prompts"] if p["hash"] == prompt_hash))
+                    p = Prompt(
+                        **next(
+                            p for p in json_data["prompts"] if p["hash"] == prompt_hash
+                        )
+                    )
                     if len(p.label) > max_prompt_label_len:
                         max_prompt_label_len = len(p.label)
-                    s = Sample(id = sample["id"],
-                               class_id = sample["class_id"],
-                               content = sample["content"])
+                    s = Sample(
+                        id=sample["id"],
+                        class_id=sample["class_id"],
+                        content=sample["content"],
+                    )
                     m = sample["metadata"]
                     self.cache.append((d, p, s, m))
         self.size = len(self.cache)
-        self._table_format = stream_item_table_format(max_model_name_len, max_prompt_label_len)
+        self._table_format = stream_item_table_format(
+            max_model_name_len, max_prompt_label_len
+        )
 
     def __iter__(self):
         return self
@@ -714,16 +713,10 @@ class JSONDataStream:
             raise StopIteration
         self.current_item_index += 1
         self._next_batch = False
-        d, p, s, m= self.cache.popleft()
-        if (len(self.cache) > 0 and
-            (self.cache[0][0] != d or self.cache[0][1] != p)):
+        d, p, s, m = self.cache.popleft()
+        if len(self.cache) > 0 and (self.cache[0][0] != d or self.cache[0][1] != p):
             self._next_batch = True
-        return StreamItem(
-            distribution=d,
-            prompt=p,
-            sample=s,
-            metadata=m
-        )
+        return StreamItem(distribution=d, prompt=p, sample=s, metadata=m)
 
     def next_batch(self):
         return self._next_batch
@@ -744,8 +737,7 @@ class Map:
         return self
 
     def _call_shell_function(self, function, prompt, sample):
-        with tempfile.NamedTemporaryFile() as prompt_file, \
-             tempfile.NamedTemporaryFile() as data_file:
+        with tempfile.NamedTemporaryFile() as prompt_file, tempfile.NamedTemporaryFile() as data_file:
             prompt_file.write(prompt.content.encode())
             prompt_file.flush()
             data_file.write(sample.content.encode())
@@ -781,10 +773,10 @@ class Map:
             return StreamItem(
                 distribution=i.distribution,
                 prompt=i.prompt,
-                sample=Sample(id=i.sample.id,
-                              class_id=i.sample.class_id,
-                              content=result.value),
-                metadata=i.metadata
+                sample=Sample(
+                    id=i.sample.id, class_id=i.sample.class_id, content=result.value
+                ),
+                metadata=i.metadata,
             )
 
     def next_batch(self):
@@ -821,7 +813,7 @@ class Partition:
         with tempfile.NamedTemporaryFile() as prompt_file1, \
              tempfile.NamedTemporaryFile() as prompt_file2, \
              tempfile.NamedTemporaryFile() as data_file1, \
-             tempfile.NamedTemporaryFile() as data_file2 :
+             tempfile.NamedTemporaryFile() as data_file2:
             prompt_file1.write(prompt1.content.encode())
             prompt_file1.flush()
             prompt_file2.write(prompt2.content.encode())
@@ -838,10 +830,7 @@ class Partition:
                 data_files=[data_file1.name, data_file2.name],
             )
             result = subprocess.run(
-                cmd,
-                shell=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             return result.returncode == 0
 
@@ -854,13 +843,17 @@ class Partition:
             if i.sample.content == sample.content:
                 class_id = id
                 break
-            if self.relation != '__ID__':
+            if self.relation != "__ID__":
                 if self.relation in BUILTIN_RELATIONS:
-                    if BUILTIN_RELATIONS[self.relation](i.sample.content, sample.content):
+                    if BUILTIN_RELATIONS[self.relation](
+                        i.sample.content, sample.content
+                    ):
                         class_id = id
                         break
                 else:
-                    if self._call_shell_relation(self.relation, i.prompt, prompt, i.sample, sample):
+                    if self._call_shell_relation(
+                        self.relation, i.prompt, prompt, i.sample, sample
+                    ):
                         class_id = id
                         break
         if class_id == None:
@@ -868,10 +861,8 @@ class Partition:
         return StreamItem(
             distribution=i.distribution,
             prompt=i.prompt,
-            sample=Sample(id=i.sample.id,
-                          class_id=class_id,
-                          content=i.sample.content),
-            metadata=i.metadata
+            sample=Sample(id=i.sample.id, class_id=class_id, content=i.sample.content),
+            metadata=i.metadata,
         )
 
     def next_batch(self):
@@ -889,25 +880,43 @@ def instantiate_shell_template(t, prompts, prompt_files, data, data_files):
     assert len(prompts) == len(prompt_files)
 
     def render(value, escape=False, truncate=False):
-        value = truncate_content(value, CONDENSED_SHELL_DATA_LENGTH) if truncate else value
+        value = (
+            truncate_content(value, CONDENSED_SHELL_DATA_LENGTH) if truncate else value
+        )
         value = shlex.quote(value) if escape else value
         return value
 
-    for (s, i) in [("", 0), ("1", 0), ("2", 1)]:
-        t = t.replace(f"%%RAW_DATA{s}%%", render(data[i-1]))
-        t = t.replace(f"%%ESCAPED_DATA{s}%%", render(data[i-1], escape=True))
-        t = t.replace(f"%%CONDENSED_DATA{s}%%", render(data[i-1], truncate=True))
-        t = t.replace(f"%%CONDENSED_ESCAPED_DATA{s}%%", render(data[i-1], truncate=True, escape=True))
-        t = t.replace(f"%%DATA_FILE{s}%%", render(data_files[i-1]))
-        t = t.replace(f"%%ESCAPED_DATA_FILE{s}%%", render(data_files[i-1], escape=True))
-        t = t.replace(f"%%PROMPT{s}%%", render(prompts[i-1].content, 0))
-        t = t.replace(f"%%ESCAPED_PROMPT{s}%%", render(prompts[i-1].content, escape=True))
-        t = t.replace(f"%%CONDENSED_PROMPT{s}%%", render(prompts[i-1].content, truncate=True))
-        t = t.replace(f"%%CONDENSED_ESCAPED_PROMPT{s}%%", render(prompts[i-1].content, escape=True, truncate=True))
-        t = t.replace(f"%%PROMPT_FILE{s}%%", render(prompt_files[i-1]))
-        t = t.replace(f"%%ESCAPED_PROMPT_FILE{s}%%", render(prompt_files[i-1], escape=True))
-        t = t.replace(f"%%PROMPT_LABEL{s}%%", render(prompts[i-1].label))
-        t = t.replace(f"%%ESCAPED_PROMPT_LABEL{s}%%", render(prompts[i-1].label, escape=True))
+    for s, i in [("", 0), ("1", 0), ("2", 1)]:
+        t = t.replace(f"%%RAW_DATA{s}%%", render(data[i - 1]))
+        t = t.replace(f"%%ESCAPED_DATA{s}%%", render(data[i - 1], escape=True))
+        t = t.replace(f"%%CONDENSED_DATA{s}%%", render(data[i - 1], truncate=True))
+        t = t.replace(
+            f"%%CONDENSED_ESCAPED_DATA{s}%%",
+            render(data[i - 1], truncate=True, escape=True),
+        )
+        t = t.replace(f"%%DATA_FILE{s}%%", render(data_files[i - 1]))
+        t = t.replace(
+            f"%%ESCAPED_DATA_FILE{s}%%", render(data_files[i - 1], escape=True)
+        )
+        t = t.replace(f"%%PROMPT{s}%%", render(prompts[i - 1].content, 0))
+        t = t.replace(
+            f"%%ESCAPED_PROMPT{s}%%", render(prompts[i - 1].content, escape=True)
+        )
+        t = t.replace(
+            f"%%CONDENSED_PROMPT{s}%%", render(prompts[i - 1].content, truncate=True)
+        )
+        t = t.replace(
+            f"%%CONDENSED_ESCAPED_PROMPT{s}%%",
+            render(prompts[i - 1].content, escape=True, truncate=True),
+        )
+        t = t.replace(f"%%PROMPT_FILE{s}%%", render(prompt_files[i - 1]))
+        t = t.replace(
+            f"%%ESCAPED_PROMPT_FILE{s}%%", render(prompt_files[i - 1], escape=True)
+        )
+        t = t.replace(f"%%PROMPT_LABEL{s}%%", render(prompts[i - 1].label))
+        t = t.replace(
+            f"%%ESCAPED_PROMPT_LABEL{s}%%", render(prompts[i - 1].label, escape=True)
+        )
 
     return t
 
@@ -948,7 +957,7 @@ def truncate_content(content, length):
                 break
             current_length += 1
             result.append(char)
-        return ''.join(result) + "..."
+        return "".join(result) + "..."
     return content
 
 
@@ -970,7 +979,8 @@ class TablePrinter:
             available_width = max(terminal_width - fixed_total, 0)
             flexible_width = available_width // flexible_columns
             column_specs = [
-                c if c[1] is not None else (c[0], flexible_width, c[2]) for c in column_specs
+                c if c[1] is not None else (c[0], flexible_width, c[2])
+                for c in column_specs
             ]
         self.column_specs = column_specs
         headers = [c[0] for c in column_specs]
@@ -992,13 +1002,13 @@ class TablePrinter:
                     break
                 current_width += char_width
                 result.append(char)
-            return ''.join(result) + "..."
+            return "".join(result) + "..."
         return content
 
-    def _wc_rjust(self, text, length, padding=' '):
+    def _wc_rjust(self, text, length, padding=" "):
         return padding * max(0, (length - wcswidth(text))) + text
 
-    def _wc_ljust(self, text, length, padding=' '):
+    def _wc_ljust(self, text, length, padding=" "):
         return text + padding * max(0, (length - wcswidth(text)))
 
     def print_row(self, row):
@@ -1035,14 +1045,16 @@ def parse_args():
     parser.add_argument("--answer", action="store_true", help="Extract answer")
     parser.add_argument("--code", action="store_true", help="Extract code")
     parser.add_argument(
-        "--partition-locally", type=str, help="Locally partition data into equivalence classes"
+        "--partition-locally",
+        type=str,
+        help="Locally partition data into equivalence classes",
     )
     parser.add_argument(
-        "--partition-globally", type=str, help="Globally partition data into equivalence classes"
+        "--partition-globally",
+        type=str,
+        help="Globally partition data into equivalence classes",
     )
-    parser.add_argument(
-        "--relation", type=str, help="Builtin relation shell command"
-    )
+    parser.add_argument("--relation", type=str, help="Builtin relation shell command")
     parser.add_argument(
         "--predicate",
         action="store_true",
@@ -1160,31 +1172,26 @@ def command_dispatch(arguments, config):
         bool(arguments.partition_globally),
     ]
 
-    if (sum(conflicting_options) > 1):
+    if sum(conflicting_options) > 1:
         print("conflicting commands", file=sys.stderr)
         exit(1)
 
-    if ((arguments.answer or arguments.code) and
-        (arguments.partition_globally or arguments.partition_locally)):
+    if (arguments.answer or arguments.code) and (
+        arguments.partition_globally or arguments.partition_locally
+    ):
         print(
             "--answer/--code can only be used when sampling LLMs",
             file=sys.stderr,
         )
         exit(1)
 
-    extension = (
-        f".{arguments.extension}"
-        if arguments.extension
-        else None
-    )
+    extension = f".{arguments.extension}" if arguments.extension else None
 
     if arguments.map:
         store = Store.from_path(Path(arguments.map))
         stream = JSONDataStream(store.load())
         function = (
-            arguments.function
-            if arguments.function
-            else config["default"]["function"]
+            arguments.function if arguments.function else config["default"]["function"]
         )
         stream = Map(stream, function)
         consumers.append(StreamItemPrinter(stream))
@@ -1197,9 +1204,7 @@ def command_dispatch(arguments, config):
             mode = PartitioningMode.LOCAL
         stream = JSONDataStream(store.load())
         relation = (
-            arguments.relation
-            if arguments.relation
-            else config["default"]["relation"]
+            arguments.relation if arguments.relation else config["default"]["relation"]
         )
         stream = Partition(stream, relation, mode)
         consumers.append(StreamItemPrinter(stream))
@@ -1214,41 +1219,50 @@ def command_dispatch(arguments, config):
             prompts = process_prompt_files(arguments.prompt)
 
         if (arguments.code or arguments.answer) and arguments.function:
-            print("--function is mutually exclusive with --code/--answer", file=sys.stderr)
+            print(
+                "--function is mutually exclusive with --code/--answer", file=sys.stderr
+            )
             exit(1)
 
         convenience_functions = [
             bool(arguments.code),
             bool(arguments.answer),
-            bool(arguments.predicate)
+            bool(arguments.predicate),
         ]
         if sum(convenience_functions) > 1:
-            print("--code, --answer and --predicate are mutually exclusive", file=sys.stderr)
+            print(
+                "--code, --answer and --predicate are mutually exclusive",
+                file=sys.stderr,
+            )
             exit(1)
 
-        function = '__ID__'
+        function = "__ID__"
 
         if arguments.answer:
-            function = '__FIRST_TAGGED_ANSWER__'
+            function = "__FIRST_TAGGED_ANSWER__"
             new_prompts = []
             for p in prompts:
-                new_prompts.append(Prompt.labelled(p.content + " " + ANSWER_DIRECTIVE, p.label))
+                new_prompts.append(
+                    Prompt.labelled(p.content + " " + ANSWER_DIRECTIVE, p.label)
+                )
             prompts = new_prompts
 
         if arguments.code:
-            function = '__FIRST_MARKDOWN_CODE_BLOCK__'
+            function = "__FIRST_MARKDOWN_CODE_BLOCK__"
 
         if arguments.predicate:
-            function = '__FIRST_TAGGED_ANSWER__'
+            function = "__FIRST_TAGGED_ANSWER__"
             new_prompts = []
-            pred_prompt = prompts[0].content + " " + PREDICATE_DIRECTIVE + " " + ANSWER_DIRECTIVE
+            pred_prompt = (
+                prompts[0].content + " " + PREDICATE_DIRECTIVE + " " + ANSWER_DIRECTIVE
+            )
             new_prompts.append(Prompt.labelled(pred_prompt, prompts[0].label))
             prompts = new_prompts
 
         if arguments.function:
             function = arguments.function
 
-        temperature=canonical_float_format(
+        temperature = canonical_float_format(
             float(arguments.temperature)
             if arguments.temperature
             else config["default"]["temperature"]
@@ -1263,19 +1277,26 @@ def command_dispatch(arguments, config):
             prompts=prompts,
         )
 
-        if (arguments.predicate and
-            len(query.prompts) * len(query.distributions) * query.num_samples > 1):
-            print("--predicate can only be used with a single model/prompt/response", file=sys.stderr)
+        if (
+            arguments.predicate
+            and len(query.prompts) * len(query.distributions) * query.num_samples > 1
+        ):
+            print(
+                "--predicate can only be used with a single model/prompt/response",
+                file=sys.stderr,
+            )
             exit(1)
 
-        if (
-            len(query.prompts) * len(query.distributions) * query.num_samples == 1
-        ):
+        if len(query.prompts) * len(query.distributions) * query.num_samples == 1:
             if arguments.predicate:
                 i = next(Map(LLMSampleStream(query, config), function))
-                if BUILTIN_RELATIONS["__TRIMMED_CASE_INSENSITIVE__"](i.sample.content, "Yes"):
+                if BUILTIN_RELATIONS["__TRIMMED_CASE_INSENSITIVE__"](
+                    i.sample.content, "Yes"
+                ):
                     exit(0)
-                if BUILTIN_RELATIONS["__TRIMMED_CASE_INSENSITIVE__"](i.sample.content, "No"):
+                if BUILTIN_RELATIONS["__TRIMMED_CASE_INSENSITIVE__"](
+                    i.sample.content, "No"
+                ):
                     exit(1)
                 exit(2)
             if function == "__ID__":
@@ -1283,16 +1304,16 @@ def command_dispatch(arguments, config):
                     prompts[0].content,
                     query.distributions[0].model,
                     query.distributions[0].temperature,
-                    config
+                    config,
                 )
             else:
                 stream = Map(LLMSampleStream(query, config), function)
                 consumers.append(SimplePrinter())
         else:
             stream = LLMSampleStream(query, config)
-            if function != '__ID__':
-                 stream = Map(stream, function)
-            stream = Partition(stream, '__ID__', PartitioningMode.GLOBAL)
+            if function != "__ID__":
+                stream = Map(stream, function)
+            stream = Partition(stream, "__ID__", PartitioningMode.GLOBAL)
             consumers.append(StreamItemPrinter(stream))
 
     if arguments.output != None and len(arguments.output) > 0:
