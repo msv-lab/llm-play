@@ -44,10 +44,6 @@ from anthropic import Anthropic
 
 VERSION = "0.1.0"
 
-ANSWER_DIRECTIVE = "Wrap the final answer with <answer></answer>."
-
-PREDICATE_DIRECTIVE = "Respond Yes or No."
-
 DEFAULT_CONFIG = rf"""
 default:
   models: []
@@ -67,13 +63,15 @@ relations:
   - __ID__
   - |-
     __TRIMMED_CASE_INSENSITIVE__
+answer_directive: |-
+  Wrap the final answer with <answer></answer>.
+predicate_directive: |-
+  Respond Yes or No.
+csv_truncate_threshold: 50
+shell_truncate_threshold: 100
 """
 
 USER_CONFIG_FILE = Path.home() / ".llm_play.yaml"
-
-TRUNCATED_CSV_DATA_LENGTH = 50
-
-CONDENSED_SHELL_DATA_LENGTH = 100
 
 
 @dataclass
@@ -371,16 +369,16 @@ class Store:
                 prompts, samples = load_prompts_and_samples(distr_dir_data)
                 return {"prompts": prompts, "data": {path_query.parent.name: samples}}
 
-    def get_writer(self, extension):
+    def get_writer(self, extension, config):
         if self.type == StoreType.FS_TREE:
-            return self.FSTreeWriter(self.path, extension)
+            return self.FSTreeWriter(self.path, extension, config)
         if self.type == StoreType.JSON:
-            return self.JSONWriter(self.path, extension)
+            return self.JSONWriter(self.path, extension, config)
         if self.type == StoreType.CSV:
-            return self.CSVWriter(self.path, extension)
+            return self.CSVWriter(self.path, extension, config)
 
     class FSTreeWriter:
-        def __init__(self, path, extension):
+        def __init__(self, path, extension, config):
             self.extension = extension
             self.path = path
             path.mkdir(exist_ok=True, parents=True)
@@ -402,7 +400,7 @@ class Store:
             pass
 
     class JSONWriter:
-        def __init__(self, path, extension):
+        def __init__(self, path, extension, config):
             self.extension = extension
             self.path = path
             self.result = {
@@ -443,7 +441,8 @@ class Store:
                 json.dump(self.result, f, indent=4)
 
     class CSVWriter:
-        def __init__(self, path, extension):
+        def __init__(self, path, extension, config):
+            self.truncate_threshold = config["csv_truncate_threshold"]
             self.extension = extension
             self.path = path
             self.rows = []
@@ -469,7 +468,7 @@ class Store:
             non_empty_lines = [line.strip() for line in lines if line.strip()]
             joined_string = " ".join(non_empty_lines)
             processed_string = joined_string.strip()
-            truncated_string = processed_string[:TRUNCATED_CSV_DATA_LENGTH]
+            truncated_string = processed_string[:self.truncate_threshold]
             is_modified = truncated_string != input_string
             return truncated_string, is_modified
 
@@ -708,7 +707,8 @@ class JSONDataStream:
 
 
 class Map:
-    def __init__(self, stream, function):
+    def __init__(self, stream, function, config):
+        self.shell_truncate_threshold = config["shell_truncate_threshold"]
         self.stream = stream
         self.function = function
 
@@ -727,6 +727,7 @@ class Map:
                 prompt_files=[prompt_file.name],
                 data=[sample.content],
                 data_files=[data_file.name],
+                truncate_threshold=self.shell_truncate_threshold
             )
             result = subprocess.run(
                 cmd,
@@ -769,7 +770,8 @@ class Map:
 
 
 class Partition:
-    def __init__(self, stream, relation, mode):
+    def __init__(self, stream, relation, mode, config):
+        self.shell_truncate_threshold = config["shell_truncate_threshold"]
         self.stream = stream
         self.relation = relation
         self.mode = mode
@@ -807,6 +809,7 @@ class Partition:
                 prompt_files=[prompt_file1.name, prompt_file2.name],
                 data=[sample1.content, sample2.content],
                 data_files=[data_file1.name, data_file2.name],
+                truncate_threshold=self.shell_truncate_threshold
             )
             result = subprocess.run(
                 cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -854,13 +857,13 @@ class Partition:
         return len(self.stream)
 
 
-def instantiate_shell_template(t, prompts, prompt_files, data, data_files):
+def instantiate_shell_template(t, prompts, prompt_files, data, data_files, truncate_threshold):
     assert len(data) == len(data_files)
     assert len(prompts) == len(prompt_files)
 
     def render(value, escape=False, truncate=False):
         value = (
-            truncate_content(value, CONDENSED_SHELL_DATA_LENGTH) if truncate else value
+            truncate_content(value, truncate_threshold) if truncate else value
         )
         value = shlex.quote(value) if escape else value
         return value
@@ -1255,7 +1258,7 @@ def command_dispatch(arguments, config):
         function = (
             arguments.function if arguments.function else config["default"]["function"]
         )
-        stream = Map(stream, function)
+        stream = Map(stream, function, config)
         consumers.append(StreamItemPrinter(stream))
     elif arguments.partition_globally or arguments.partition_locally:
         if arguments.partition_globally:
@@ -1268,7 +1271,7 @@ def command_dispatch(arguments, config):
         relation = (
             arguments.relation if arguments.relation else config["default"]["relation"]
         )
-        stream = Partition(stream, relation, mode)
+        stream = Partition(stream, relation, mode, config)
         consumers.append(StreamItemPrinter(stream))
     else:
         # sampling command
@@ -1298,7 +1301,7 @@ def command_dispatch(arguments, config):
             new_prompts = []
             for p in prompts:
                 new_prompts.append(
-                    Prompt.labelled(p.content + " " + ANSWER_DIRECTIVE, p.label)
+                    Prompt.labelled(p.content + " " + config["answer_directive"], p.label)
                 )
             prompts = new_prompts
 
@@ -1309,7 +1312,7 @@ def command_dispatch(arguments, config):
             function = "__FIRST_TAGGED_ANSWER__"
             new_prompts = []
             pred_prompt = (
-                prompts[0].content + " " + PREDICATE_DIRECTIVE + " " + ANSWER_DIRECTIVE
+                prompts[0].content + " " + config["predicate_directive"] + " " + config["answer_directive"]
             )
             new_prompts.append(Prompt.labelled(pred_prompt, prompts[0].label))
             prompts = new_prompts
@@ -1331,6 +1334,9 @@ def command_dispatch(arguments, config):
         for m in arguments.model if arguments.model else config["default"]["models"]:
             distributions.append(Distribution(model=m, temperature=temperature))
 
+        if len(distributions) == 0:
+            panic("select a model")
+
         query = LLMQuery(
             distributions=distributions,
             num_samples=arguments.num_samples if arguments.num_samples else 1,
@@ -1345,7 +1351,7 @@ def command_dispatch(arguments, config):
 
         if len(query.prompts) * len(query.distributions) * query.num_samples == 1:
             if arguments.predicate:
-                i = next(Map(LLMSampleStream(query, max_tokens, config), function))
+                i = next(Map(LLMSampleStream(query, max_tokens, config), function, config))
                 if BUILTIN_RELATIONS["__TRIMMED_CASE_INSENSITIVE__"](
                     i.sample.content, "Yes"
                 ):
@@ -1364,13 +1370,13 @@ def command_dispatch(arguments, config):
                     config,
                 )
             else:
-                stream = Map(LLMSampleStream(query, max_tokens, config), function)
+                stream = Map(LLMSampleStream(query, max_tokens, config), function, config)
                 consumers.append(SimplePrinter())
         else:
             stream = LLMSampleStream(query, max_tokens, config)
             if function != "__ID__":
-                stream = Map(stream, function)
-            stream = Partition(stream, "__ID__", PartitioningMode.GLOBAL)
+                stream = Map(stream, function, config)
+            stream = Partition(stream, "__ID__", PartitioningMode.GLOBAL, config)
             consumers.append(StreamItemPrinter(stream))
 
     if arguments.output != None and len(arguments.output) > 0:
@@ -1378,7 +1384,7 @@ def command_dispatch(arguments, config):
             path = Path(out)
             delete_path(path)
             store = Store.from_path(path)
-            consumers.append(store.get_writer(extension))
+            consumers.append(store.get_writer(extension, config))
 
     for i in stream:
         for c in consumers:

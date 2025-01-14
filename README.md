@@ -19,11 +19,11 @@ flowchart LR
 
 ## Installation & Setup
 
-[WIP] Installed the tool from PyPI:
+[WIP] Install the tool from PyPI:
 
     pip install llm-play
 
-Configure API providers and models interactively (with options editable in `~/.llm_play.yaml`):
+Configure API providers and models interactively (with settings editable in `~/.llm_play.yaml`):
 
     llm-play --add-provider
     llm-play --add-model
@@ -40,7 +40,7 @@ In all these cases, the response is printed on stdout, and can be redirected to 
 
     llm-play "What is the capital of China?" > output.md
 
-Default settings such as the model and its temperature can be configured interactively with `-c/--configure`. These settings are saved in `~/.llm_play.yaml`:
+Default settings such as the model and its temperature can be configured interactively with `-c/--configure` (with settings editable in `~/.llm_play.yaml`):
 
     llm-play -c
 
