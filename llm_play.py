@@ -42,7 +42,7 @@ import mistletoe
 from anthropic import Anthropic
 
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 DEFAULT_CONFIG = rf"""
 default:
