@@ -715,18 +715,20 @@ class Map:
     def __iter__(self):
         return self
 
-    def _call_shell_function(self, function, prompt, sample):
-        with tempfile.NamedTemporaryFile() as prompt_file, tempfile.NamedTemporaryFile() as data_file:
+    def _call_shell_function(self, function, distribution, prompt, sample):
+        with tempfile.NamedTemporaryFile() as prompt_file, \
+             tempfile.NamedTemporaryFile() as sample_file:
             prompt_file.write(prompt.content.encode())
             prompt_file.flush()
-            data_file.write(sample.content.encode())
-            data_file.flush()
+            sample_file.write(sample.content.encode())
+            sample_file.flush()
             cmd = instantiate_shell_template(
                 function,
+                distributions=[distribution],
                 prompts=[prompt],
                 prompt_files=[prompt_file.name],
-                data=[sample.content],
-                data_files=[data_file.name],
+                samples=[sample],
+                sample_files=[sample_file.name],
                 truncate_threshold=self.shell_truncate_threshold
             )
             result = subprocess.run(
@@ -747,7 +749,7 @@ class Map:
             if self.function in BUILTIN_FUNCTIONS:
                 result = BUILTIN_FUNCTIONS[self.function](i.sample.content)
             else:
-                result = self._call_shell_function(self.function, i.prompt, i.sample)
+                result = self._call_shell_function(self.function, i.distribution, i.prompt, i.sample)
             if result == FUNCTION_FAILURE:
                 continue
             return StreamItem(
@@ -781,16 +783,18 @@ class Partition:
         self._next_class = 0
         self._classes = dict()
 
-    def _add_new_class(self, prompt, sample):
+    def _add_new_class(self, distribution, prompt, sample):
         new_class = self._next_class
-        self._classes[new_class] = (prompt, sample)
+        self._classes[new_class] = (distribution, prompt, sample)
         self._next_class += 1
         return new_class
 
     def __iter__(self):
         return self
 
-    def _call_shell_relation(self, relation, prompt1, prompt2, sample1, sample2):
+    def _call_shell_relation(self, relation, i1, i2):
+        distribution1, prompt1, sample1 = i1
+        distribution2, prompt2, sample2 = i2
         with tempfile.NamedTemporaryFile() as prompt_file1, \
              tempfile.NamedTemporaryFile() as prompt_file2, \
              tempfile.NamedTemporaryFile() as data_file1, \
@@ -805,10 +809,11 @@ class Partition:
             data_file2.flush()
             cmd = instantiate_shell_template(
                 relation,
+                distributions=[distribution1, distribution2],
                 prompts=[prompt1, prompt2],
                 prompt_files=[prompt_file1.name, prompt_file2.name],
-                data=[sample1.content, sample2.content],
-                data_files=[data_file1.name, data_file2.name],
+                samples=[sample1, sample2],
+                sample_files=[data_file1.name, data_file2.name],
                 truncate_threshold=self.shell_truncate_threshold
             )
             result = subprocess.run(
@@ -821,7 +826,7 @@ class Partition:
             self._reset_classes()
         i = next(self.stream)
         class_id = None
-        for id, (prompt, sample) in self._classes.items():
+        for id, (distribution, prompt, sample) in self._classes.items():
             if i.sample.content == sample.content:
                 class_id = id
                 break
@@ -834,12 +839,14 @@ class Partition:
                         break
                 else:
                     if self._call_shell_relation(
-                        self.relation, i.prompt, prompt, i.sample, sample
+                        self.relation,
+                        (i.distribution, i.prompt, i.sample),
+                        (distribution, prompt, sample)
                     ):
                         class_id = id
                         break
         if class_id == None:
-            class_id = self._add_new_class(i.prompt, i.sample)
+            class_id = self._add_new_class(i.distribution, i.prompt, i.sample)
         return StreamItem(
             distribution=i.distribution,
             prompt=i.prompt,
@@ -857,8 +864,8 @@ class Partition:
         return len(self.stream)
 
 
-def instantiate_shell_template(t, prompts, prompt_files, data, data_files, truncate_threshold):
-    assert len(data) == len(data_files)
+def instantiate_shell_template(t, distributions, prompts, prompt_files, samples, sample_files, truncate_threshold):
+    assert len(samples) == len(sample_files)
     assert len(prompts) == len(prompt_files)
 
     def render(value, escape=False, truncate=False):
@@ -869,17 +876,20 @@ def instantiate_shell_template(t, prompts, prompt_files, data, data_files, trunc
         return value
 
     for s, i in [("", 0), ("1", 0), ("2", 1)]:
-        t = t.replace(f"%%RAW_DATA{s}%%", render(data[i - 1]))
-        t = t.replace(f"%%ESCAPED_DATA{s}%%", render(data[i - 1], escape=True))
-        t = t.replace(f"%%CONDENSED_DATA{s}%%", render(data[i - 1], truncate=True))
+        data_id = f"{distributions[i - 1].model}_{distributions[i - 1].temperature}_{prompts[i - 1].hash}_{samples[i - 1].id}_{samples[i - 1].class_id}"
+        t = t.replace(f"%%RAW_DATA{s}%%", render(samples[i - 1].content))
+        t = t.replace(f"%%ESCAPED_DATA{s}%%", render(samples[i - 1].content, escape=True))
+        t = t.replace(f"%%CONDENSED_DATA{s}%%", render(samples[i - 1].content, truncate=True))
         t = t.replace(
             f"%%CONDENSED_ESCAPED_DATA{s}%%",
-            render(data[i - 1], truncate=True, escape=True),
+            render(samples[i - 1].content, truncate=True, escape=True),
         )
-        t = t.replace(f"%%DATA_FILE{s}%%", render(data_files[i - 1]))
+        t = t.replace(f"%%DATA_FILE{s}%%", render(sample_files[i - 1]))
         t = t.replace(
-            f"%%ESCAPED_DATA_FILE{s}%%", render(data_files[i - 1], escape=True)
+            f"%%ESCAPED_DATA_FILE{s}%%", render(sample_files[i - 1], escape=True)
         )
+        t = t.replace(f"%%DATA_ID{s}%%", data_id)
+        t = t.replace(f"%%ESCAPED_DATA_ID{s}%%", shlex.quote(data_id))
         t = t.replace(f"%%PROMPT{s}%%", render(prompts[i - 1].content, 0))
         t = t.replace(
             f"%%ESCAPED_PROMPT{s}%%", render(prompts[i - 1].content, escape=True)

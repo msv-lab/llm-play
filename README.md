@@ -218,10 +218,9 @@ Similarly, `RAW_`, `ESCAPED_`, `CONDENCED_` and `CONDENSED_ESCAPED_` variants ar
 The `ESCAPED_` variants are provided for the following variables:
 
 - `%%DATA_FILE%%` - a path to a temporary file containing the data.
+- `%%DATA_ID%%` - a unique ID associated with the datum, i.e. `<model>_<temperature>_<prompt hash>_<sample id>_<class_id>`.
 - `%%PROMPT_FILE%%` - a path to a temporary file containing the prompt.
 - `%%PROMPT_LABEL%%` - the prompt label.
-- [WIP] `%%UNIQUE_ID%%` - a unique ID associated with the datum.
-- [WIP] `%%TEMP_DIR%%` - a temporary directory that is removed after the shell command terminates.
 
 For equivalence relation commands, which require multiple arguments, the data and prompt placeholders are indexed, e.g. `%%RAW_DATA1%%` and `%%PROMPT_LABEL2%%`.
 
