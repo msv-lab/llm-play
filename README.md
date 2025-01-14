@@ -17,9 +17,9 @@ flowchart LR
     - CSV/JSON export`"]
 ```
 
-## [WIP] Installation & Setup
+## Installation & Setup
 
-Installed the tool from PyPI:
+[WIP] Installed the tool from PyPI:
 
     pip install llm-play
 
@@ -118,7 +118,7 @@ A transformation of a datum fails iff the function terminates with a non-zero ex
 
 Answers can also be extracted by LLMs. For example, this function checks if a prevously received response is affirmative:
 
-    --function "llm-play '<answer>'%%CONDENSED_ESCAPED_DATA%%'</answer>. Is this answer affirmative? Respond Yes or No.' --model qwen2.5-7b-instruct --answer"
+    --function "llm-play '<answer>'%%CONDENSED_ESCAPED_DATA%%'</answer>. Is this answer affirmative? Respond Yes or No.' --model qwen2.5-72b-instruct --answer"
 
 ### On-the-fly Transformation
 
@@ -147,9 +147,9 @@ In on-the-fly mode, the transformation options selected with `-c` are ignored.
 
 ## Partitioning
 
-Responses can be grouped into equivalence classes based on a specified binary relation. The equivalence relation used for partitioning can be customized via the option `--relation`. An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` ignores trailing whitespaces and is case-insensitive. A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-7b-instruct` model:
+Responses can be grouped into equivalence classes based on a specified binary relation. The equivalence relation used for partitioning can be customized via the option `--relation`. An equivalence is defined via a builtin function or a shell command. The builtin relation `__ID__` checks if two answers are syntactically identical. The builtin relation `__TRIMMED_CASE_INSENSITIVE__` ignores trailing whitespaces and is case-insensitive. A relation defined via a shell command holds iff the command exits with the zero status code. For example, this is to group answers into equivalence classes based on a judgement from the `qwen2.5-72b-instruct` model:
 
-    --relation "llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <answer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model qwen2.5-7b-instruct --predicate"
+    --relation "llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <answer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model qwen2.5-72b-instruct --predicate"
 
 Paritioning can be performed either locally - for responses associated with the same (model, prompt) pair - using the option  `--partition-locally`, or globally - across all responses - using the option `--partition-globally`. For example, this is to partition using a custom relation defined in a Python script:
 

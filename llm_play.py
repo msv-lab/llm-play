@@ -44,93 +44,29 @@ from anthropic import Anthropic
 
 VERSION = "0.1.0"
 
-DEFAULT_MODEL = "qwen2.5-72b-instruct"
-
 ANSWER_DIRECTIVE = "Wrap the final answer with <answer></answer>."
 
 PREDICATE_DIRECTIVE = "Respond Yes or No."
 
-LLM_BASED_AFFIRMATION_CLASSIFIER = rf"llm-play '<answer>'%%CONDENSED_ESCAPED_DATA%%'</answer>. Is this answer affirmative? Respond Yes or No.' --model {DEFAULT_MODEL} --answer"
-
-LLM_BASED_EQUIVALENCE_CHECKER = rf"llm-play 'Are these two answers equivalent: <answer1>'%%CONDENSED_ESCAPED_DATA1%%'</answer1> and <naswer2>'%%CONDENSED_ESCAPED_DATA2%%'</answer2>?' --model {DEFAULT_MODEL} --predicate"
-
 DEFAULT_CONFIG = rf"""
 default:
-  models:
-    - {DEFAULT_MODEL}
+  models: []
   temperature: 1.0
   max_tokens: 1024
   function: __ID__
   relation: __ID__
-providers:
-  Aliyun:
-    API: OpenAI
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    key_env_variable: DASHSCOPE_API_KEY
-    support_multiple_samples: True
-  DeepSeek:
-    API: OpenAI
-    base_url: https://api.deepseek.com
-    key_env_variable: DEEPSEEK_API_KEY
-    support_multiple_samples: False
-  CloseAI_OpenAI:
-    API: OpenAI
-    base_url: https://api.openai-proxy.org/v1
-    key_env_variable: CLOSEAI_API_KEY
-    support_multiple_samples: True
-  CloseAI_Anthropic:
-    API: Anthropic
-    base_url: https://api.openai-proxy.org/anthropic
-    key_env_variable: CLOSEAI_API_KEY
-    support_multiple_samples: True
-models:
-  -
-    name: qwen-max-2024-09-19
-    provider: Aliyun
-  -
-    name: qwq-32b-preview
-    provider: Aliyun
-  -
-    name: qwen2.5-72b-instruct
-    provider: Aliyun
-  -
-    name: qwen2.5-7b-instruct
-    provider: Aliyun
-  -
-    name: qwen2.5-coder-32b-instruct
-    provider: Aliyun
-  -
-    name: qwen2.5-coder-7b-instruct
-    provider: Aliyun
-  -
-    name: deepseek-chat
-    provider: DeepSeek
-  -
-    name: o1-2024-12-17
-    provider: CloseAI_OpenAI
-  -
-    name: o1-mini-2024-09-12
-    provider: CloseAI_OpenAI
-  -
-    name: gpt-4o-2024-11-20
-    provider: CloseAI_OpenAI
-  -
-    name: gpt-4o-mini-2024-07-18
-    provider: CloseAI_OpenAI
-  -
-    name: claude-3-5-sonnet-20241022
-    provider: CloseAI_Anthropic
+providers: []
+models: []
 functions:
   - __ID__
-  - __FIRST_TAGGED_ANSWER__
-  - __FIRST_MARKDOWN_CODE_BLOCK__
   - |-
-    {LLM_BASED_AFFIRMATION_CLASSIFIER}
+    __FIRST_TAGGED_ANSWER__
+  - |-
+    __FIRST_MARKDOWN_CODE_BLOCK__
 relations:
   - __ID__
-  - __TRIMMED_CASE_INSENSITIVE__
   - |-
-    {LLM_BASED_EQUIVALENCE_CHECKER}
+    __TRIMMED_CASE_INSENSITIVE__
 """
 
 USER_CONFIG_FILE = Path.home() / ".llm_play.yaml"
@@ -184,6 +120,11 @@ BUILTIN_RELATIONS = {
         lambda x, y: x.strip().lower() == y.strip().lower()
     ),
 }
+
+
+def panic(msg):
+    print(f"ERROR: {msg}", file=sys.stderr)
+    exit(1)
 
 
 @dataclass
@@ -578,8 +519,10 @@ def stream_item_table_format(max_model_name_len, max_prompt_label_len):
 def get_provider_by_model(model, config):
     for m in config["models"]:
         if model == m["name"]:
-            return m["provider"]
-    raise ValueError(f"no provider for model {model}")
+            for p in config["providers"]:
+                if m["provider"] == p["id"]:
+                    return p
+    panic(f"no provider for model {model}")
 
 
 class LLMSampleStream:
@@ -606,14 +549,14 @@ class LLMSampleStream:
 
     def _sample(self, distribution, prompt, n):
         provider = get_provider_by_model(distribution.model, self.config)
-        if self.config["providers"][provider]["support_multiple_samples"]:
+        if provider["support_multiple_samples"]:
             num_responses = n
         else:
             num_responses = 1
-        if self.config["providers"][provider]["API"] == "OpenAI":
+        if provider["API"] == "OpenAI":
             client = OpenAI(
-                api_key=os.getenv(self.config["providers"][provider]["key_env_variable"]),
-                base_url=self.config["providers"][provider]["base_url"],
+                api_key=provider["api_key"],
+                base_url=provider["base_url"],
             )
             completion = client.chat.completions.create(
                 model=distribution.model,
@@ -624,10 +567,10 @@ class LLMSampleStream:
             )
             return [c.message.content for c in completion.choices]
         else:
-            assert self.config["providers"][provider]["API"] == "Anthropic"
+            assert provider["API"] == "Anthropic"
             client = Anthropic(
-                api_key=os.getenv(self.config["providers"][provider]["key_env_variable"]),
-                base_url=self.config["providers"][provider]["base_url"],
+                api_key=provider["api_key"],
+                base_url=provider["base_url"],
             )
             message = client.messages.create(
                 model=distribution.model,
@@ -675,10 +618,10 @@ class LLMSampleStream:
 
 def stream_response_to_stdout(prompt, model, temperature, max_tokens, config):
     provider = get_provider_by_model(model, config)
-    if config["providers"][provider]["API"] == "OpenAI":
+    if provider["API"] == "OpenAI":
         client = OpenAI(
-            api_key=os.getenv(config["providers"][provider]["key_env_variable"]),
-            base_url=config["providers"][provider]["base_url"],
+            api_key=provider["api_key"],
+            base_url=provider["base_url"],
         )
         stream = client.chat.completions.create(
             model=model,
@@ -690,10 +633,10 @@ def stream_response_to_stdout(prompt, model, temperature, max_tokens, config):
             if len(chunk.choices) > 0 and chunk.choices[0].delta.content is not None:
                 print(chunk.choices[0].delta.content, end="")
     else:
-        assert config["providers"][provider]["API"] == "Anthropic"
+        assert provider["API"] == "Anthropic"
         client = Anthropic(
-            api_key=os.getenv(config["providers"][provider]["key_env_variable"]),
-            base_url=config["providers"][provider]["base_url"],
+            api_key=provider["api_key"],
+            base_url=provider["base_url"],
         )
         with client.messages.stream(
                 model=model,
@@ -1060,7 +1003,7 @@ class TablePrinter:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="llm-play interface")
+    parser = argparse.ArgumentParser(description="llm-play CLI")
     parser.add_argument("query", nargs="?", type=str, help="Query string")
     parser.add_argument("--prompt", nargs="+", type=str, help="Prompt files")
     parser.add_argument("--output", nargs="+", type=str, help="Output FS-tree/JSON/CSV")
@@ -1074,7 +1017,7 @@ def parse_args():
     parser.add_argument(
         "--max-tokens", type=float, help="The maximum number of tokens to generate"
     )
-    parser.add_argument("--map", type=str, help="Transform given data")
+    parser.add_argument("--map", type=str, help="Transform given data", metavar='INPUT')
     parser.add_argument(
         "--function", type=str, help="Builtin function or shell command"
     )
@@ -1087,11 +1030,13 @@ def parse_args():
         "--partition-locally",
         type=str,
         help="Locally partition data into equivalence classes",
+        metavar='INPUT'
     )
     parser.add_argument(
         "--partition-globally",
         type=str,
         help="Globally partition data into equivalence classes",
+        metavar='INPUT'
     )
     parser.add_argument("--relation", type=str, help="Builtin relation shell command")
     parser.add_argument(
@@ -1104,6 +1049,8 @@ def parse_args():
     parser.add_argument(
         "-c", "--configure", action="store_true", help="Set default options"
     )
+    parser.add_argument("--add-provider", action="store_true", help="Interactively add provider")
+    parser.add_argument("--add-model", action="store_true", help="Interactively add model")
     return parser.parse_args()
 
 
@@ -1177,8 +1124,82 @@ def configure(config):
     )
     if selected:
         config["default"] = selected
-    with open(USER_CONFIG_FILE, "w") as f:
-        yaml.dump(config, f, width=float("inf"))
+        with open(USER_CONFIG_FILE, "w") as f:
+            yaml.dump(config, f, width=float("inf"))
+        print(f"changes written to {USER_CONFIG_FILE}")
+
+
+def add_provider(config):
+    selected = InquirerPy.prompt(
+        [
+            {
+                "type": "list",
+                "name": "API",
+                "message": "Select API type:",
+                "choices": ["OpenAI", "Anthropic"],
+            },
+            {
+                "type": "input",
+                "name": "id",
+                "message": "Choose ID for this provider:",
+                "validate": lambda result: result not in (p["id"] for p in config["providers"]),
+                "invalid_message": "A provider with this ID already exists",
+            },
+            {
+                "type": "input",
+                "name": "base_url",
+                "message": "Base URL:",
+                "default": (lambda selected: (
+                    "https://api.anthropic.com"
+                    if selected["API"] == "Anthropic"
+                    else "https://api.openai.com/v1"
+                ))
+            },
+            {
+                "type": "password",
+                "name": "api_key",
+                "transformer": lambda _: "[hidden]",
+                "message": "Enter your API key:"
+            },
+            {
+                "type": "confirm",
+                "name": "support_multiple_samples",
+                "message": "Does this provider support arbitrary n > 1?"
+            },
+        ]
+    )
+    if selected:
+        config["providers"].append(selected)
+        with open(USER_CONFIG_FILE, "w") as f:
+            yaml.dump(config, f, width=float("inf"))
+        print(f"changes written to {USER_CONFIG_FILE}")
+
+
+def add_model(config):
+    selected = InquirerPy.prompt(
+        [
+            {
+                "type": "list",
+                "name": "provider",
+                "message": "Choose provider:",
+                "choices": [p["id"] for p in config["providers"]],
+            },
+            {
+                "type": "input",
+                "name": "name",
+                "message": "Enter model name:",
+                "validate": lambda result: result not in (m["name"] for m in config["models"]),
+                "invalid_message": "A model with this name already exists",
+            }
+        ]
+    )
+    if selected:
+        config["models"].append(selected)
+        if len(config["default"]["models"]) == 0:
+            config["default"]["models"].append(selected["name"])
+        with open(USER_CONFIG_FILE, "w") as f:
+            yaml.dump(config, f, width=float("inf"))
+        print(f"changes written to {USER_CONFIG_FILE}")
 
 
 def canonical_float_format(number):
@@ -1219,17 +1240,12 @@ def command_dispatch(arguments, config):
     ]
 
     if sum(conflicting_options) > 1:
-        print("conflicting commands", file=sys.stderr)
-        exit(1)
+        panic("conflicting commands")
 
     if (arguments.answer or arguments.code) and (
         arguments.partition_globally or arguments.partition_locally
     ):
-        print(
-            "--answer/--code can only be used when sampling LLMs",
-            file=sys.stderr,
-        )
-        exit(1)
+        panic("--answer/--code can only be used when sampling LLMs")
 
     extension = f".{arguments.extension}" if arguments.extension else None
 
@@ -1265,10 +1281,7 @@ def command_dispatch(arguments, config):
             prompts = process_prompt_files(arguments.prompt)
 
         if (arguments.code or arguments.answer) and arguments.function:
-            print(
-                "--function is mutually exclusive with --code/--answer", file=sys.stderr
-            )
-            exit(1)
+            panic("--function is mutually exclusive with --code/--answer")
 
         convenience_functions = [
             bool(arguments.code),
@@ -1276,11 +1289,7 @@ def command_dispatch(arguments, config):
             bool(arguments.predicate),
         ]
         if sum(convenience_functions) > 1:
-            print(
-                "--code, --answer and --predicate are mutually exclusive",
-                file=sys.stderr,
-            )
-            exit(1)
+            panic("--code, --answer and --predicate are mutually exclusive")
 
         function = "__ID__"
 
@@ -1332,11 +1341,7 @@ def command_dispatch(arguments, config):
             arguments.predicate
             and len(query.prompts) * len(query.distributions) * query.num_samples > 1
         ):
-            print(
-                "--predicate can only be used with a single model/prompt/response",
-                file=sys.stderr,
-            )
-            exit(1)
+            panic("--predicate can only be used with a single model/prompt/response")
 
         if len(query.prompts) * len(query.distributions) * query.num_samples == 1:
             if arguments.predicate:
@@ -1397,7 +1402,21 @@ def main():
         config = yaml.safe_load(DEFAULT_CONFIG)
 
     if arguments.configure:
+        if len(config["providers"]) == 0:
+            panic("add providers with --add-provider and models with --add-model")
+        if len(config["models"]) == 0:
+            panic("add models with --add-model")
         configure(config)
+        exit(0)
+
+    if arguments.add_model:
+        if len(config["providers"]) == 0:
+            panic("first, add providers with --add-provider")
+        add_model(config)
+        exit(0)
+
+    if arguments.add_provider:
+        add_provider(config)
         exit(0)
 
     command_dispatch(arguments, config)
