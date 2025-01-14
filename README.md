@@ -1,25 +1,10 @@
 # llm-play
 
-llm-play is a tool that queries LLMs, analyzes responses, and executes experimental pipelines.
-
-```mermaid
-flowchart LR
-    A["`**Prompting LLMs:**
-    - Multiple models
-    - Multiple prompts
-    - Multiple samples`"] --> B["`**Data Transformation:**
-    - Answer extraction
-    - Code extraction
-    - Custom extractors`"]
-    B --> C["`**Data Analysis:**
-    - Semantic partitioning
-    - Custom evaluators
-    - CSV/JSON export`"]
-```
+llm-play is a tool that queries LLMs, analyzes responses, and executes experimental pipelines. First, it simplifies querying multiple LLMs with multiple prompts and generating multiple samples. Second, it provides data transformation capabilities, including answer extraction, code extraction, and customizable extractors to parse LLM outputs. Finally, it facilitates data analysis through semantic partitioning of responses, custom evaluators, and exporting results to CSV or JSON formats.
 
 ## Installation & Setup
 
-[WIP] Install the tool from PyPI:
+Install the tool from PyPI:
 
     pip install llm-play
 
