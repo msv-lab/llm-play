@@ -39,6 +39,7 @@ import InquirerPy
 from openai import OpenAI
 from wcwidth import wcwidth, wcswidth
 import mistletoe
+from anthropic import Anthropic
 
 
 VERSION = "0.1.0"
@@ -58,6 +59,7 @@ default:
   models:
     - {DEFAULT_MODEL}
   temperature: 1.0
+  max_tokens: 1024
   function: __ID__
   relation: __ID__
 providers:
@@ -581,8 +583,9 @@ def get_provider_by_model(model, config):
 
 
 class LLMSampleStream:
-    def __init__(self, query, config):
+    def __init__(self, query, max_tokens, config):
         self.config = config
+        self.max_tokens = max_tokens
         self.current_item_index = 0
         self.current_sample_index = 0
         self.cache = deque()
@@ -603,21 +606,38 @@ class LLMSampleStream:
 
     def _sample(self, distribution, prompt, n):
         provider = get_provider_by_model(distribution.model, self.config)
-        client = OpenAI(
-            api_key=os.getenv(self.config["providers"][provider]["key_env_variable"]),
-            base_url=self.config["providers"][provider]["base_url"],
-        )
         if self.config["providers"][provider]["support_multiple_samples"]:
             num_responses = n
         else:
             num_responses = 1
-        completion = client.chat.completions.create(
-            model=distribution.model,
-            temperature=float(distribution.temperature),
-            messages=[{"role": "user", "content": prompt.content}],
-            n=num_responses,
-        )
-        return [c.message.content for c in completion.choices]
+        if self.config["providers"][provider]["API"] == "OpenAI":
+            client = OpenAI(
+                api_key=os.getenv(self.config["providers"][provider]["key_env_variable"]),
+                base_url=self.config["providers"][provider]["base_url"],
+            )
+            completion = client.chat.completions.create(
+                model=distribution.model,
+                max_tokens=self.max_tokens,
+                temperature=float(distribution.temperature),
+                messages=[{"role": "user", "content": prompt.content}],
+                n=num_responses,
+            )
+            return [c.message.content for c in completion.choices]
+        else:
+            assert self.config["providers"][provider]["API"] == "Anthropic"
+            client = Anthropic(
+                api_key=os.getenv(self.config["providers"][provider]["key_env_variable"]),
+                base_url=self.config["providers"][provider]["base_url"],
+            )
+            message = client.messages.create(
+                model=distribution.model,
+                max_tokens=self.max_tokens,
+                temperature=float(distribution.temperature),
+                messages=[
+                    {"role": "user", "content": prompt.content}
+                ]
+            )
+            return [c.text for c in message.content]
 
     def __next__(self):
         if self.current_item_index >= len(self):
@@ -653,22 +673,38 @@ class LLMSampleStream:
         return self.size
 
 
-def stream_response_to_stdout(prompt, model, temperature, config):
+def stream_response_to_stdout(prompt, model, temperature, max_tokens, config):
     provider = get_provider_by_model(model, config)
-    client = OpenAI(
-        api_key=os.getenv(config["providers"][provider]["key_env_variable"]),
-        base_url=config["providers"][provider]["base_url"],
-    )
-    stream = client.chat.completions.create(
-        model=model,
-        temperature=float(temperature),
-        messages=[{"role": "user", "content": prompt}],
-        stream=True,
-    )
-    for chunk in stream:
-        if len(chunk.choices) > 0 and chunk.choices[0].delta.content is not None:
-            print(chunk.choices[0].delta.content, end="")
-
+    if config["providers"][provider]["API"] == "OpenAI":
+        client = OpenAI(
+            api_key=os.getenv(config["providers"][provider]["key_env_variable"]),
+            base_url=config["providers"][provider]["base_url"],
+        )
+        stream = client.chat.completions.create(
+            model=model,
+            temperature=float(temperature),
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        )
+        for chunk in stream:
+            if len(chunk.choices) > 0 and chunk.choices[0].delta.content is not None:
+                print(chunk.choices[0].delta.content, end="")
+    else:
+        assert config["providers"][provider]["API"] == "Anthropic"
+        client = Anthropic(
+            api_key=os.getenv(config["providers"][provider]["key_env_variable"]),
+            base_url=config["providers"][provider]["base_url"],
+        )
+        with client.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=float(temperature),
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
     if os.isatty(sys.stdout.fileno()):
         print()
 
@@ -1030,10 +1066,13 @@ def parse_args():
     parser.add_argument("--output", nargs="+", type=str, help="Output FS-tree/JSON/CSV")
     parser.add_argument("--model", nargs="+", type=str, help="List of models to query")
     parser.add_argument(
-        "-t", "--temperature", type=float, help="Temperature for model generation"
+        "-t", "--temperature", type=float, help="Amount of randomness injected into the response"
     )
     parser.add_argument(
         "-n", "--num-samples", type=int, help="Number of samples to generate"
+    )
+    parser.add_argument(
+        "--max-tokens", type=float, help="The maximum number of tokens to generate"
     )
     parser.add_argument("--map", type=str, help="Transform given data")
     parser.add_argument(
@@ -1112,6 +1151,13 @@ def configure(config):
                 "filter": (lambda result: float(result)),
                 "message": "Sampling temperature:",
                 "default": config["default"]["temperature"],
+            },
+            {
+                "type": "number",
+                "name": "max_tokens",
+                "filter": (lambda result: int(result)),
+                "message": "Maximum tokens to generate:",
+                "default": config["default"]["max_tokens"],
             },
             {
                 "type": "list",
@@ -1267,6 +1313,11 @@ def command_dispatch(arguments, config):
             if arguments.temperature
             else config["default"]["temperature"]
         )
+        max_tokens = (
+            int(arguments.max_tokens)
+            if arguments.max_tokens
+            else config["default"]["max_tokens"]
+        )
         distributions = []
         for m in arguments.model if arguments.model else config["default"]["models"]:
             distributions.append(Distribution(model=m, temperature=temperature))
@@ -1289,7 +1340,7 @@ def command_dispatch(arguments, config):
 
         if len(query.prompts) * len(query.distributions) * query.num_samples == 1:
             if arguments.predicate:
-                i = next(Map(LLMSampleStream(query, config), function))
+                i = next(Map(LLMSampleStream(query, max_tokens, config), function))
                 if BUILTIN_RELATIONS["__TRIMMED_CASE_INSENSITIVE__"](
                     i.sample.content, "Yes"
                 ):
@@ -1304,13 +1355,14 @@ def command_dispatch(arguments, config):
                     prompts[0].content,
                     query.distributions[0].model,
                     query.distributions[0].temperature,
+                    max_tokens,
                     config,
                 )
             else:
-                stream = Map(LLMSampleStream(query, config), function)
+                stream = Map(LLMSampleStream(query, max_tokens, config), function)
                 consumers.append(SimplePrinter())
         else:
-            stream = LLMSampleStream(query, config)
+            stream = LLMSampleStream(query, max_tokens, config)
             if function != "__ID__":
                 stream = Map(stream, function)
             stream = Partition(stream, "__ID__", PartitioningMode.GLOBAL)
