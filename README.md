@@ -1,6 +1,6 @@
 # llm-play
 
-llm-play is a tool for UNIX environments that automates querying multiple LLMs using multiple prompts and generating multiple responses. Then, it helps extracting answers from these responses, partitioning the answers into equivalence classes, and running simple experimental workflows. Finally, it saves results in a filesystem tree, CSV or JSON files.
+llm-play is a tool for UNIX environments that automates querying multiple LLMs using multiple prompts and generating multiple responses. It helps extracting answers from these responses, partitioning the answers into equivalence classes, and running simple experimental pipelines. It can save results in a filesystem tree, CSV or JSON files.
 
 ## Installation & Setup
 
@@ -15,7 +15,7 @@ Configure API providers and models interactively (with settings editable in `~/.
 
 ## Basic Usage
 
-An LLM can be queried via an argument, a specified prompt file, or stdin:
+An LLM can be queried using an argument, a specified prompt file, standard input (stdin), or text entered through an editor:
 
     llm-play "What is the capital of China?"
     llm-play --prompt prompt.md
@@ -100,7 +100,7 @@ Function defined through shell commands should use the [shell template language]
 
 A transformation of a datum fails iff the function terminates with a non-zero exit code; in this case, the datum is ignored. Thus, shell commands can also be used for data filtering. For example, this is to filter out responses longer than 50 characters:
 
-    --function '(( $(wc -m < %%ESCAPED_DATA_FILE%%) <= 50 )) && cat %%ESCAPED_DATA_FILE%%' \
+    --function '(( $(wc -m < %%ESCAPED_DATA_FILE%%) <= 50 )) && cat %%ESCAPED_DATA_FILE%%'
 
 Answers can also be extracted by LLMs. For example, this function checks if a prevously received response is affirmative:
 
