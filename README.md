@@ -1,6 +1,6 @@
 # llm-play
 
-llm-play is a tool that queries LLMs, analyzes responses, and executes experimental pipelines. First, it simplifies querying multiple LLMs with multiple prompts and generating multiple samples. Second, it provides data transformation capabilities, including answer extraction, code extraction, and customizable extractors to parse LLM outputs. Finally, it facilitates data analysis through semantic partitioning of responses, custom evaluators, and exporting results to CSV or JSON formats.
+llm-play is a tool for UNIX environments that automates querying multiple LLMs using multiple prompts and generating multiple responses. Then, it helps extracting answers from these responses, partitioning the answers into equivalence classes, and running simple experimental workflows. Finally, it saves results in a filesystem tree, CSV or JSON files.
 
 ## Installation & Setup
 

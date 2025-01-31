@@ -16,18 +16,16 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 from dataclasses import dataclass
-from typing import Dict, Tuple, List, Any, Union
+from typing import Dict, List, Any, Union
 from enum import Enum, auto
 
 import shlex
 import os
 import sys
 import shutil
-import configparser
 import argparse
 import tempfile
 import subprocess
-import re
 from collections import deque, defaultdict
 import hashlib
 from pathlib import Path
@@ -44,7 +42,7 @@ from anthropic import Anthropic
 
 VERSION = "0.1.1"
 
-DEFAULT_CONFIG = rf"""
+DEFAULT_CONFIG = r"""
 default:
   models: []
   temperature: 1.0
@@ -565,7 +563,7 @@ class LLMSampleStream:
             return [c.message.content for c in completion.choices]
         else:
             assert provider["API"] == "Anthropic"
-            assert self.max_tokens != None
+            assert self.max_tokens is not None
             client = Anthropic(
                 api_key=provider["api_key"],
                 base_url=provider["base_url"],
@@ -616,7 +614,7 @@ class LLMSampleStream:
 
 def stream_response_to_stdout(prompt, model, temperature, max_tokens, config):
     provider = get_provider_by_model(model, config)
-    if provider["API"] == "Anthropic" and max_tokens == None:
+    if provider["API"] == "Anthropic" and max_tokens is None:
         panic("Anthropic API requires a --max-tokens value")
     if provider["API"] == "OpenAI":
         client = OpenAI(
@@ -630,7 +628,7 @@ def stream_response_to_stdout(prompt, model, temperature, max_tokens, config):
             "stream": True
         }
         if max_tokens:
-            completion_kwargs["max_tokens"] = self.max_tokens
+            completion_kwargs["max_tokens"] = max_tokens
         stream = client.chat.completions.create(**completion_kwargs)
         for chunk in stream:
             if len(chunk.choices) > 0 and chunk.choices[0].delta.content is not None:
@@ -849,7 +847,7 @@ class Partition:
                     ):
                         class_id = id
                         break
-        if class_id == None:
+        if class_id is None:
             class_id = self._add_new_class(i.distribution, i.prompt, i.sample)
         return StreamItem(
             distribution=i.distribution,
@@ -1386,7 +1384,7 @@ def command_dispatch(arguments, config):
             stream = Partition(stream, "__ID__", PartitioningMode.GLOBAL, config)
             consumers.append(StreamItemPrinter(stream))
 
-    if arguments.output != None and len(arguments.output) > 0:
+    if arguments.output is not None and len(arguments.output) > 0:
         for out in set(arguments.output):
             path = Path(out)
             delete_path(path)

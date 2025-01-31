@@ -274,6 +274,9 @@ requires-dist = [
     { name = "wcwidth", specifier = ">=0.2.13" },
 ]
 
+[package.metadata.requires-dev]
+dev = []
+
 [[package]]
 name = "mistletoe"
 version = "1.4.0"

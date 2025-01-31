@@ -19,3 +19,6 @@ llm-play = "llm_play:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = []
