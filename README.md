@@ -20,6 +20,7 @@ An LLM can be queried via an argument, a specified prompt file, or stdin:
     llm-play "What is the capital of China?"
     llm-play --prompt prompt.md
     llm-play < prompt.md
+    llm-play -e  # enter prompt in system's $EDITOR
 
 In all these cases, the response is printed on stdout, and can be redirected to a file:
 

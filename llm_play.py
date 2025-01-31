@@ -1021,6 +1021,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="llm-play CLI")
     parser.add_argument("query", nargs="?", type=str, help="Query string")
     parser.add_argument("--prompt", nargs="+", type=str, help="Prompt files")
+    parser.add_argument("-e", "--editor", action="store_true", help="Edit prompt in system editor")
     parser.add_argument("--output", nargs="+", type=str, help="Output FS-tree/JSON/CSV")
     parser.add_argument("--model", nargs="+", type=str, help="List of models to query")
     parser.add_argument(
@@ -1235,12 +1236,22 @@ def delete_path(path: Path):
             shutil.rmtree(path)
 
 
+def editor() -> str:
+    editor = os.getenv('EDITOR', 'nano')
+    with tempfile.NamedTemporaryFile(mode="r+") as temp_file:
+        subprocess.run(f"{editor} {temp_file.name}", shell=True)
+        with open(temp_file.name, 'r') as temp_file_read:
+            text = temp_file_read.read()
+        return text
+
+
 def command_dispatch(arguments, config):
     stream = []
     consumers = []
 
     conflicting_options = [
         bool(arguments.query),
+        bool(arguments.editor),
         bool(arguments.prompt),
         bool(arguments.map),
         bool(arguments.partition_locally),
@@ -1283,6 +1294,8 @@ def command_dispatch(arguments, config):
 
         if arguments.query:
             prompts = [Prompt.unlabelled(arguments.query)]
+        elif arguments.editor:
+            prompts = [Prompt.unlabelled(editor())]
         elif not arguments.prompt and not arguments.query:
             prompts = [Prompt.unlabelled(sys.stdin.read())]
         else:
