@@ -48,7 +48,6 @@ DEFAULT_CONFIG = rf"""
 default:
   models: []
   temperature: 1.0
-  max_tokens: 1024
   function: __ID__
   relation: __ID__
 providers: []
@@ -111,6 +110,7 @@ BUILTIN_FUNCTIONS = {
     ),
     "__FIRST_MARKDOWN_CODE_BLOCK__": (lambda s: extract_first_markdown_code_block(s)),
 }
+
 
 BUILTIN_RELATIONS = {
     "__ID__": (lambda x, y: x == y),
@@ -332,13 +332,6 @@ class Store:
                 samples[prompt_hash] = list(collect_samples(sample_dir))
             return (prompts, samples)
 
-        def pick_subdir(path):
-            subdirs = [d for d in path.iterdir() if d.is_dir()]
-            if len(subdirs) == 0:
-                return None
-            else:
-                return subdirs[0]
-
         distr_dir_data = list(parse_distr_dir(path_query))
         if len(distr_dir_data) > 0:  # path_query is a distr dir
             prompts, samples = load_prompts_and_samples(distr_dir_data)
@@ -533,6 +526,9 @@ class LLMSampleStream:
         self.cache = deque()
         self.execution_plan = deque()
         for d in query.distributions:
+            if get_provider_by_model(d.model, config)["API"] == "Anthropic" \
+               and max_tokens is None:
+                panic("Anthropic API requires a --max-tokens value")
             for p in query.prompts:
                 self.execution_plan.append((d, p, query.num_samples))
         self.size = len(query.distributions) * len(query.prompts) * query.num_samples
@@ -557,16 +553,19 @@ class LLMSampleStream:
                 api_key=provider["api_key"],
                 base_url=provider["base_url"],
             )
-            completion = client.chat.completions.create(
-                model=distribution.model,
-                max_tokens=self.max_tokens,
-                temperature=float(distribution.temperature),
-                messages=[{"role": "user", "content": prompt.content}],
-                n=num_responses,
-            )
+            completion_kwargs = {
+                "model": distribution.model,
+                "temperature": float(distribution.temperature),
+                "messages": [{"role": "user", "content": prompt.content}],
+                "n": num_responses,
+            }
+            if self.max_tokens:
+                completion_kwargs["max_tokens"] = self.max_tokens
+            completion = client.chat.completions.create(**completion_kwargs)
             return [c.message.content for c in completion.choices]
         else:
             assert provider["API"] == "Anthropic"
+            assert self.max_tokens != None
             client = Anthropic(
                 api_key=provider["api_key"],
                 base_url=provider["base_url"],
@@ -617,17 +616,22 @@ class LLMSampleStream:
 
 def stream_response_to_stdout(prompt, model, temperature, max_tokens, config):
     provider = get_provider_by_model(model, config)
+    if provider["API"] == "Anthropic" and max_tokens == None:
+        panic("Anthropic API requires a --max-tokens value")
     if provider["API"] == "OpenAI":
         client = OpenAI(
             api_key=provider["api_key"],
             base_url=provider["base_url"],
         )
-        stream = client.chat.completions.create(
-            model=model,
-            temperature=float(temperature),
-            messages=[{"role": "user", "content": prompt}],
-            stream=True,
-        )
+        completion_kwargs = {
+            "model": model,
+            "temperature": float(temperature),
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True
+        }
+        if max_tokens:
+            completion_kwargs["max_tokens"] = self.max_tokens
+        stream = client.chat.completions.create(**completion_kwargs)
         for chunk in stream:
             if len(chunk.choices) > 0 and chunk.choices[0].delta.content is not None:
                 print(chunk.choices[0].delta.content, end="")
@@ -1113,13 +1117,6 @@ def configure(config):
                 "default": config["default"]["temperature"],
             },
             {
-                "type": "number",
-                "name": "max_tokens",
-                "filter": (lambda result: int(result)),
-                "message": "Maximum tokens to generate:",
-                "default": config["default"]["max_tokens"],
-            },
-            {
                 "type": "list",
                 "name": "function",
                 "message": "Function for --map:",
@@ -1338,7 +1335,7 @@ def command_dispatch(arguments, config):
         max_tokens = (
             int(arguments.max_tokens)
             if arguments.max_tokens
-            else config["default"]["max_tokens"]
+            else None
         )
         distributions = []
         for m in arguments.model if arguments.model else config["default"]["models"]:
