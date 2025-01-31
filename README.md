@@ -212,17 +212,12 @@ For equivalence relation commands, which require multiple arguments, the data an
 
 ## Planned Improvements
 
-[WIP] To update an existing store, use the option `--update` instead of `--output`:
+[WIP] The option `--debug` prints detailed logs on stderr.
 
-    llm-play --prompt *.md --update samples
-
-In case of collisions, i.e. when samples for the same (model, temperature, prompt) tuple already exist in the store, the prompt labels with matching hashes will be updated, and the old responses will be removed.
-
-[WIP] To continue an interrupted experiment, use `--continue` instead of `--output` or `--update`.
+[WIP] To continue an incomplete/interrupted experiment, use `--continue` instead of `--output`.
 
     llm-play --prompt *.md --continue samples
 
-It will skip all tasks for which there is already an output file in the store.
+It will skip all tasks for which there is already an entry in the store. These entries are identified by prompt hashes, but not their labels. In contrast with `--output`, `--continue` can only be used with a single output.
 
-[WIP] The option `--debug` prints detailed logs on stderr.
-
+[WIP] To execute jobs in parallel using 5 workers, use `--parallel 5`

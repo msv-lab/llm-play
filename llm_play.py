@@ -244,11 +244,17 @@ class Store:
 
     def load(self):
         if self.type == StoreType.FS_TREE:
+            if not self.path.is_dir():
+                panic(f"directory {self.path} does not exist")
             return self._load_fs_tree()
         if self.type == StoreType.JSON:
+            if not self.path.is_file():
+                panic(f"file {self.path} does not exist")
             with self.path.open("r") as file:
                 return json.load(file)
         if self.type == StoreType.CSV:
+            if not self.path.is_file():
+                panic(f"file {self.path} does not exist")
             return self._load_csv()
 
     def _load_csv(self):
@@ -257,6 +263,8 @@ class Store:
         with open(self.path, mode="r") as csvfile:
             csv_reader = csv.DictReader(csvfile)
             for row in csv_reader:
+                if "Sample Content [Truncated]" in row:
+                    panic("data in CSV file is truncated")
                 prompt = {
                     "hash": row["Prompt Hash"],
                     "label": row["Prompt Label"],
@@ -329,6 +337,9 @@ class Store:
                 )
                 samples[prompt_hash] = list(collect_samples(sample_dir))
             return (prompts, samples)
+
+        if path_query.is_dir() and not any(path_query.iterdir()):
+            return {"prompts": [], "data": dict()}
 
         distr_dir_data = list(parse_distr_dir(path_query))
         if len(distr_dir_data) > 0:  # path_query is a distr dir
@@ -1086,6 +1097,8 @@ def process_prompt_files(path_list):
             for f in path.iterdir():
                 if f.is_file() and f.suffix == ".md":
                     add_file(f)
+        else:
+            panic(f"{path} does not exist")
 
     return prompts
 
@@ -1133,7 +1146,7 @@ def configure(config):
     )
     if selected:
         config["default"] = selected
-        with open(USER_CONFIG_FILE, "w") as f:
+        with USER_CONFIG_FILE.open("w") as f:
             yaml.dump(config, f, width=float("inf"))
         print(f"changes written to {USER_CONFIG_FILE}")
 
@@ -1179,7 +1192,7 @@ def add_provider(config):
     )
     if selected:
         config["providers"].append(selected)
-        with open(USER_CONFIG_FILE, "w") as f:
+        with USER_CONFIG_FILE.open("w") as f:
             yaml.dump(config, f, width=float("inf"))
         print(f"changes written to {USER_CONFIG_FILE}")
 
@@ -1206,7 +1219,7 @@ def add_model(config):
         config["models"].append(selected)
         if len(config["default"]["models"]) == 0:
             config["default"]["models"].append(selected["name"])
-        with open(USER_CONFIG_FILE, "w") as f:
+        with USER_CONFIG_FILE.open("w") as f:
             yaml.dump(config, f, width=float("inf"))
         print(f"changes written to {USER_CONFIG_FILE}")
 
@@ -1419,8 +1432,8 @@ def main():
         print(VERSION)
         exit(0)
 
-    if os.path.isfile(USER_CONFIG_FILE):
-        with open(USER_CONFIG_FILE, "r") as file:
+    if USER_CONFIG_FILE.is_file():
+        with USER_CONFIG_FILE.open("r") as file:
             config = yaml.safe_load(file)
     else:
         config = yaml.safe_load(DEFAULT_CONFIG)
