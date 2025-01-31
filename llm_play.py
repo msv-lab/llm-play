@@ -68,6 +68,35 @@ csv_truncate_threshold: 50
 shell_truncate_threshold: 100
 """
 
+
+def shell_template_help():
+    help = [
+        ("%%RAW_DATA{,1,2}%%", "Original data"),
+        ("%%ESCAPED_DATA{,1,2}%%", "Shell-escaped data"),
+        ("%%CONDENSED_DATA{,1,2}%%", "Truncated data"),
+        ("%%CONDENSED_ESCAPED_DATA{,1,2}%%", "Shell-escaped, truncated data"),
+        ("%%DATA_FILE{,1,2}%%", "Data file path"),
+        ("%%ESCAPED_DATA_FILE{,1,2}%%", "Shell-escaped data file path"),
+        ("%%DATA_ID{,1,2}%%", "Unique data ID"),
+        ("%%ESCAPED_DATA_ID{,1,2}%%", "Shell-escaped unique data ID"),
+        ("%%PROMPT{,1,2}%%", "Original prompt"),
+        ("%%ESCAPED_PROMPT{,1,2}%%", "Shell-escaped prompt"),
+        ("%%CONDENSED_PROMPT{,1,2}%%", "Truncated prompt"),
+        ("%%CONDENSED_ESCAPED_PROMPT{,1,2}%%", "Shell-escaped, truncated prompt"),
+        ("%%PROMPT_FILE{,1,2}%%", "rompt file path"),
+        ("%%ESCAPED_PROMPT_FILE{,1,2}%%", "Shell-escaped prompt file path"),
+        ("%%PROMPT_LABEL{,1,2}%%", "Prompt label"),
+        ("%%ESCAPED_PROMPT_LABEL{,1,2}%%", "Shell-escaped prompt label")
+    ]
+    max_len_col1 = max(len(pair[0]) for pair in help)
+    summary = "\n".join([f"{left:<{max_len_col1}}   {right}" for left, right in help])
+    return f"""
+The following placeholders are supported in shell templates:
+
+{summary}
+    """
+
+
 USER_CONFIG_FILE = Path.home() / ".llm_play.yaml"
 
 
@@ -1029,7 +1058,10 @@ class TablePrinter:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="llm-play CLI")
+    parser = argparse.ArgumentParser(prog="llm-play",
+                                     formatter_class=argparse.RawDescriptionHelpFormatter,
+                                     description="A tool that queries LLMs, analyzes responses, and executes experimental pipelines",
+                                     epilog=shell_template_help())
     parser.add_argument("query", nargs="?", type=str, help="Query string")
     parser.add_argument("--prompt", nargs="+", type=str, help="Prompt files")
     parser.add_argument("-e", "--editor", action="store_true", help="Edit prompt in system editor")
@@ -1392,7 +1424,7 @@ def command_dispatch(arguments, config):
                 ):
                     exit(1)
                 exit(2)
-            if function == "__ID__":
+            if function == "__ID__" and arguments.output is None:
                 stream_response_to_stdout(
                     prompts[0].content,
                     query.distributions[0].model,
