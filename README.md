@@ -165,12 +165,12 @@ The output of a command with `--predicate` cannot be exported with `--output`. P
 
 ## Data Formats
 
-Data can be written using the `--output` and `--update` options, or read using the `--map` and `--partition-*` options in the following three formats: `FS_TREE` (filesystem tree), `JSON` and `CSV`. The format is determined by the argument of the above options, which is treated as a directory path unless it ends with `.json` or `.csv`. Here is a comparison table between these formats.
+Data can be written using the `--output` option, or read using the `--map` and `--partition-*` options in the following three formats: `FS_TREE` (filesystem tree), `JSON` and `CSV`. The format is determined by the argument of the above options, which is treated as a directory path unless it ends with `.json` or `.csv`. Here is a comparison table between these formats.
 
 |   | `FS_TREE` | `JSON` | `CSV` |
 | - | --------- | ------ | ----- |
 | Intended use | Manual inspection | Storage and sharing | Data analysis |
-| Store prompts? | Yes | Yes | Truncated |
+| Store prompts? | Yes | Yes | No |
 | Store responses? | Yes | Yes | Truncated |
 | Store metadata? | File extension | File extension | No |
 
