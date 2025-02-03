@@ -184,7 +184,7 @@ When data exported into CSV is truncated, the corresponding column name is chang
 
 To convert between different formats, a transformation with an identity function can used:
 
-    llm-play --map data --function __ID__ --relation __ID__ --output data.json
+    llm-play --map data --function __ID__ --output data.json
 
 ## Shell Template Language
 
